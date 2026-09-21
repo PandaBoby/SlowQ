@@ -1,12 +1,14 @@
 <div align="center">
 
-<img src="SlowQ/SlowQ.png" width="112" alt="SlowQ">
+<img src="SlowQ/SlowQ.png" width="112" alt="SlowQ 慢Q">
 
-# SlowQ
+# SlowQ · 慢Q
 
-**Hold ⌘Q for 3 seconds to quit — no more accidental quits**
+**Hold-to-quit guard for ⌘Q**
 
-A tiny native macOS utility that takes over the global ⌘Q shortcut
+> Slow down quitting.
+
+A native macOS menu bar utility that takes over the global ⌘Q shortcut
 
 [![Platform](https://img.shields.io/badge/macOS-13%2B-black?logo=apple&logoColor=white)](#requirements)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white)](#project-layout)
@@ -19,6 +21,7 @@ A tiny native macOS utility that takes over the global ⌘Q shortcut
 </div>
 
 ---
+
 
 ## What it does
 
@@ -114,7 +117,7 @@ macOS requires apps that intercept global keyboard events to hold the **Accessib
 
 1. Launch `SlowQ.app`
 2. Open **System Settings → Privacy & Security → Accessibility**
-3. Find **SlowQ** and tick it (if it's not listed, add `/Applications/SlowQ.app` — or the dev build `SlowQ/.build-app/SlowQ.app` — with the `+` button)
+3. Find **慢Q** on a Chinese-locale system, or **SlowQ** on an English one, and tick it — if it's not listed, add `/Applications/SlowQ.app` (dev build: `SlowQ/.build-app/SlowQ.app`) with the `+` button
 4. SlowQ detects the grant automatically and starts working — no restart needed
 
 Once granted, a snail icon appears in the menu bar. To verify it's active, check that `~/Library/Logs/SlowQ.log` contains `event tap 安装成功` (enable logging first — see below).
@@ -232,6 +235,20 @@ swift build -c release # release build
 ```
 
 Re-run `./build-app.sh` after changing sources to repackage. Same command applies after swapping the icon source.
+
+## Naming & branding
+
+| Item | Value |
+|---|---|
+| App name | SlowQ |
+| Chinese name | 慢Q |
+| Chinese subtitle | 防误触退出助手 |
+| App Store title | 慢Q - 防误触退出 |
+| GitHub description | SlowQ(慢Q)—— 防止误触 Command+Q 退出的 macOS 菜单栏工具 |
+| Chinese slogan | 退一步,再确认。 |
+| English slogan | Slow down quitting. |
+
+On a Chinese-locale system the app is displayed as **慢Q** (localized via `InfoPlist.strings`); on an English-locale system it shows as **SlowQ**. That means the Finder icon label and the Accessibility permission entry both read **慢Q** on Chinese systems.
 
 ## License
 

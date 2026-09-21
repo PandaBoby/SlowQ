@@ -216,7 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let quit = NSMenuItem(
-            title: "退出 SlowQ (⌥⌘Q)", action: #selector(quitSelf), keyEquivalent: "q"
+            title: "退出 慢Q (⌥⌘Q)", action: #selector(quitSelf), keyEquivalent: "q"
         )
         quit.keyEquivalentModifierMask = [.command, .option]
         quit.target = self

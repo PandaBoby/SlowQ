@@ -126,12 +126,21 @@ func render(scale: CGFloat) -> NSBitmapImageRep? {
     // 横幅文字
     let textX = 226 + (logoAdvance > 0 ? logoAdvance : 60)
     let textW = W - textX - 90
-    drawText("SlowQ", topY: 18, font: .systemFont(ofSize: 27, weight: .bold),
-             color: .white, align: .left, x: textX, width: textW)
-    drawText("按住 ⌘Q 满 3 秒才退出,告别误触", topY: 55,
+    // 品牌:主名 SlowQ + 中文名 慢Q
+    let title = NSMutableAttributedString(string: "SlowQ", attributes: [
+        .font: NSFont.systemFont(ofSize: 27, weight: .bold),
+        .foregroundColor: NSColor.white,
+    ])
+    title.append(NSAttributedString(string: "  慢Q", attributes: [
+        .font: NSFont.systemFont(ofSize: 17, weight: .semibold),
+        .foregroundColor: NSColor(calibratedWhite: 1, alpha: 0.72),
+    ]))
+    let titleSize = title.size()
+    title.draw(at: NSPoint(x: textX, y: H - 18 - titleSize.height))
+    drawText("防误触退出助手 · 退一步，再确认。", topY: 55,
              font: .systemFont(ofSize: 14, weight: .medium),
              color: .white, align: .left, x: textX, width: textW)
-    drawText("Hold ⌘Q for 3 seconds to quit", topY: 77,
+    drawText("Slow down quitting.", topY: 77,
              font: .systemFont(ofSize: 12, weight: .regular),
              color: NSColor(calibratedWhite: 1, alpha: 0.78), align: .left, x: textX, width: textW)
 

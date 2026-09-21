@@ -1,12 +1,14 @@
 <div align="center">
 
-<img src="SlowQ/SlowQ.png" width="112" alt="SlowQ">
+<img src="SlowQ/SlowQ.png" width="112" alt="SlowQ 慢Q">
 
-# SlowQ
+# SlowQ · 慢Q
 
-**按住 ⌘Q 满 3 秒才退出 —— 告别误触退出应用**
+**防误触退出助手**
 
-一个接管全局 ⌘Q 的 macOS 原生小工具
+> 退一步，再确认。
+
+一个接管全局 ⌘Q 的 macOS 原生菜单栏工具
 
 [![Platform](https://img.shields.io/badge/macOS-13%2B-black?logo=apple&logoColor=white)](#系统要求)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white)](#项目结构)
@@ -24,7 +26,7 @@
 
 在 macOS 上,`⌘Q` 会**立刻**退出当前应用——正在编辑的文档、没保存的草稿、跑着的任务,一次误触就没了。
 
-SlowQ 把 `⌘Q` 变成"需要按住"的操作:按下时屏幕中央浮出倒计时圆环,**按住满 3 秒**才真正退出,**中途松手立即取消**。它通过系统级事件拦截接管**所有应用**的 `⌘Q`,无需逐个配置。
+SlowQ(慢Q)把 `⌘Q` 变成"需要按住"的操作:按下时屏幕中央浮出倒计时圆环,**按住满 3 秒**才真正退出,**中途松手立即取消**。它通过系统级事件拦截接管**所有应用**的 `⌘Q`,无需逐个配置。
 
 > 灵感来自 Chrome 的 "Hold ⌘Q to quit"。
 
@@ -112,9 +114,9 @@ open SlowQ/.build-app/SlowQ.app
 
 macOS 要求拦截全局键盘事件的应用获得**辅助功能**权限,否则拦截完全不生效:
 
-1. 启动 `SlowQ.app`
+1. 启动 `SlowQ.app`(中文系统显示为「慢Q」)
 2. 打开 **系统设置 → 隐私与安全性 → 辅助功能**
-3. 找到 **SlowQ** 并勾选(若列表中没有,点 `+` 手动添加,选 `/Applications/SlowQ.app` 或开发构建 `SlowQ/.build-app/SlowQ.app`)
+3. 找到 **慢Q**(英文系统显示 **SlowQ**)并勾选 —— 若列表中没有,点 `+` 手动添加 `/Applications/SlowQ.app`(开发构建为 `SlowQ/.build-app/SlowQ.app`)
 4. SlowQ 会**自动检测**到授权并立即生效,无需重启
 
 授权成功后菜单栏出现蜗牛图标。验证是否生效:看 `~/Library/Logs/SlowQ.log` 是否出现 `event tap 安装成功`(需先开启日志,见下)。
@@ -232,6 +234,20 @@ swift build -c release # 发布构建
 ```
 
 改完源码后跑 `./build-app.sh` 重新打包;改了图标源则重复同样命令即可。
+
+## 命名与品牌
+
+| 项 | 内容 |
+|---|---|
+| 应用名 | SlowQ |
+| 中文名 | 慢Q |
+| 中文副标题 | 防误触退出助手 |
+| App Store 标题 | 慢Q - 防误触退出 |
+| GitHub 描述 | SlowQ(慢Q)—— 防止误触 Command+Q 退出的 macOS 菜单栏工具 |
+| 中文 Slogan | 退一步,再确认。 |
+| 英文 Slogan | Slow down quitting. |
+
+中文系统下应用显示为 **慢Q**(通过 `InfoPlist.strings` 本地化),英文系统显示 **SlowQ** —— 因此 Finder 图标名与「辅助功能」权限列表里出现的都是 **慢Q**。
 
 ## 许可证
 

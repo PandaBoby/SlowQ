@@ -84,6 +84,7 @@ else
 fi
 
 # ── Info.plist ──
+# 品牌:应用名 SlowQ,中文名 慢Q(通过 InfoPlist.strings 按系统语言本地化显示)
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -97,12 +98,28 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleExecutable</key><string>SlowQ</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
+    <key>CFBundleLocalizations</key>
+    <array><string>zh-Hans</string><string>en</string></array>
+    <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
     <key>LSUIElement</key><true/>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHumanReadableCopyright</key><string>Copyright 2026 PandaBoby — Apache License 2.0</string>
 </dict>
 </plist>
 PLIST
+
+# ── 本地化显示名 ──
+# 中文系统:显示「慢Q」;英文系统:显示 SlowQ。Finder/启动台/辅助功能列表都读这个。
+mkdir -p "$APP/Contents/Resources/zh-Hans.lproj" "$APP/Contents/Resources/en.lproj"
+cat > "$APP/Contents/Resources/zh-Hans.lproj/InfoPlist.strings" <<'ZH'
+"CFBundleName" = "慢Q";
+"CFBundleDisplayName" = "慢Q";
+ZH
+cat > "$APP/Contents/Resources/en.lproj/InfoPlist.strings" <<'EN'
+"CFBundleName" = "SlowQ";
+"CFBundleDisplayName" = "SlowQ";
+EN
 
 # ── 签名 ──
 # adhoc 签名(本机无开发者证书)。注意:重新构建后二进制变化可能使辅助功能授权失效,
