@@ -3,8 +3,8 @@ import ObjectiveC
 
 // MARK: - Entry
 
-// NSApplication.delegate 是 weak 引用,必须强引用保活。
-// 用 objc 关联对象把 delegate 挂在 app 上,防止编译优化释放全局变量。
+// NSApplication.delegate 是 weak 引用。app.run() 不返回,
+// 全局 let 本身保活;objc 关联对象作为显式强引用双保险。
 var kSlowQDelegateKey: Void = ()
 
 let app = NSApplication.shared

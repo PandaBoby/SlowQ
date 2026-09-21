@@ -26,21 +26,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         holdSeconds = UserDefaults.standard.double(forKey: "holdSeconds")
         if holdSeconds <= 0 { holdSeconds = 3.0 }
 
+        registerTerminateObserver()
+
         // 主动检查辅助功能权限
         let trusted = AXIsProcessTrustedWithOptions(
             [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
                 as CFDictionary
         )
-        if !trusted {
+        if trusted {
+            log("辅助功能权限 OK")
+            setupStatusItem()
+            if !installEventTap() {
+                // 启动时已可信但 tap 创建失败(罕见):进入轮询重试
+                pollForPermission()
+            }
+        } else {
             log("未获得辅助功能权限,等待授权")
-            // tap 装不上时 installEventTap 里也会弹窗,这里等待授权后自动重试
             pollForPermission()
-            return
         }
-        log("辅助功能权限 OK")
+    }
 
-        setupStatusItem()
-        installEventTap()
+    /// 幂等注册终止观察者(仅注册一次)
+    private var terminateObserverRegistered = false
+    private func registerTerminateObserver() {
+        guard !terminateObserverRegistered else { return }
+        terminateObserverRegistered = true
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
@@ -54,14 +64,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
             guard let self else { t.invalidate(); return }
             if AXIsProcessTrusted() {
-                t.invalidate()
-                self.log("权限已授予,安装事件拦截")
                 self.setupStatusItem()
-                self.installEventTap()
-                NotificationCenter.default.addObserver(
-                    forName: NSApplication.willTerminateNotification,
-                    object: nil, queue: .main
-                ) { [weak self] _ in self?.uninstallEventTap() }
+                if self.installEventTap() {
+                    t.invalidate()
+                    self.log("权限已授予,事件拦截已安装")
+                } else {
+                    // 权限状态与 tap 创建存在延迟窗口,保留轮询下秒重试
+                    self.log("权限已授予但 tap 创建失败,继续重试")
+                }
             }
         }
     }
@@ -133,13 +143,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 保存 userInfo 指针以便释放
     private var userInfoPointer: UnsafeMutableRawPointer?
 
-    private func installEventTap() {
+    private func installEventTap() -> Bool {
+        // 已装上则不重复
+        if eventTap != nil { return true }
+
         let mask = (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
             | (1 << CGEventType.flagsChanged.rawValue)
 
         let selfPtr = Unmanaged<AppDelegate>.passRetained(self).toOpaque()
-        userInfoPointer = selfPtr
 
         // Swift 闭包上下文指针
         let callback: CGEventTapCallBack = { proxy, type, event, refcon in
@@ -155,16 +167,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             callback: callback,
             userInfo: selfPtr
         ) else {
+            // 失败路径:释放上面 passRetained 的引用,避免反复启动时泄漏
+            Unmanaged<AppDelegate>.fromOpaque(selfPtr).release()
             log("event tap 创建失败(权限不足)")
             showPermissionsAlert()
-            return
+            return false
         }
 
+        userInfoPointer = selfPtr
         eventTap = tap
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         log("event tap 安装成功")
+        return true
     }
 
     private func uninstallEventTap() {
@@ -198,10 +214,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Event handling
 
-    private func keyCode(of event: CGEvent) -> Int64 {
-        event.getIntegerValueField(.keyboardEventKeycode)
-    }
-
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByUserInput || type == .tapDisabledByTimeout {
             if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
@@ -212,11 +224,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let flags = event.flags
         let cmd = flags.contains(.maskCommand)
-        let keyCode = keyCode(of: event)
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+
+        // 隐私:只记录 ⌘Q 相关事件,不落盘其他按键序列
+        let isQEvent = keyCode == 12
 
         switch type {
         case .flagsChanged:
-            log("flagsChanged cmd=\(cmd)")
+            if isQEvent || holding { log("flagsChanged cmd=\(cmd)") }
             // ⌘ 松开时,如果还没达到时长,取消本次退出
             if holding && !cmd {
                 cancelHold()
@@ -224,24 +239,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return Unmanaged.passRetained(event)
 
         case .keyDown:
-            log("keyDown code=\(keyCode) cmd=\(cmd) holding=\(holding) fired=\(fired)")
-            // 拦截 Cmd+Q(keycode 12 = Q)。
-            // 关键:按住期间系统会自动重复 keyDown(key repeat),
-            // 只要处于 holding 状态(无论 fired 与否)一律吞掉。
-            if cmd && keyCode == 12 && holding {
-                return nil
-            }
-            if cmd && keyCode == 12 && !holding {
+            if isQEvent && cmd {
+                log("keyDown code=12 cmd=true holding=\(holding) fired=\(fired)")
+                // 拦截 Cmd+Q(keycode 12 = Q)。
+                // 关键:按住期间系统会自动重复 keyDown(key repeat),
+                // 只要处于 holding 状态(无论 fired 与否)一律吞掉。
+                if holding { return nil }
+                if pausedForSyntheticQuit { return nil } // 暂停窗口内物理 ⌘Q 也不放行
                 beginHold()
-                return nil // 吞掉
+                return nil
             }
             return Unmanaged.passRetained(event)
 
         case .keyUp:
-            log("keyUp code=\(keyCode) cmd=\(cmd) holding=\(holding) fired=\(fired)")
-            if cmd && keyCode == 12 && holding {
-                endHold()
-                return nil // 松开时不放行 keyUp(避免应用收到孤立的 keyUp)
+            if isQEvent && cmd {
+                log("keyUp code=12 cmd=true holding=\(holding) fired=\(fired)")
+                if holding {
+                    endHold()
+                    return nil // 松开时不放行 keyUp(避免应用收到孤立的 keyUp)
+                }
             }
             return Unmanaged.passRetained(event)
 
@@ -250,20 +266,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: Logging(默认关闭,避免拖慢全局键盘事件与记录按键序列)
+
+    /// 调试日志开关:`defaults write com.slowq.app debugLog -bool true`
+    private var debugLogEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "debugLog")
+    }
+
     private func log(_ s: String) {
+        guard debugLogEnabled else { return }
         let line = "\(Date().timeIntervalSince1970)) \(s)\n"
-        let path = NSHomeDirectory() + "/Library/Logs/SlowQ.log"
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: path) {
-            fm.createFile(atPath: path, contents: nil)
+        let data = line.data(using: .utf8)!
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            self?.flushLog(data)
         }
-        guard let fh = FileHandle(forWritingAtPath: path) else {
-            try? line.data(using: .utf8)!.write(to: URL(fileURLWithPath: "/tmp/slowq-fallback.log"), options: .atomic)
-            return
+    }
+
+    private let logQueue = DispatchQueue(label: "com.slowq.app.log")
+    private func flushLog(_ data: Data) {
+        logQueue.sync {
+            let path = NSHomeDirectory() + "/Library/Logs/SlowQ.log"
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: path) {
+                guard fm.createFile(atPath: path, contents: nil) else {
+                    try? data.write(to: URL(fileURLWithPath: "/tmp/slowq-fallback.log"), options: .atomic)
+                    return
+                }
+            }
+            guard let fh = FileHandle(forWritingAtPath: path) else { return }
+            defer { try? fh.close() }
+            fh.seekToEndOfFile()
+            fh.write(data)
         }
-        fh.seekToEndOfFile()
-        fh.write(line.data(using: .utf8)!)
-        try? fh.close()
     }
 
     private func beginHold() {
@@ -299,8 +333,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 暂停窗口标记:tap 物理禁用期间,到达的物理 ⌘Q 也不放行(handleEvent 层兜底)
+    private var pausedForSyntheticQuit = false {
+        didSet {
+            // 与 eventTapIsPaused 同步生命周期
+        }
+    }
+
     private var eventTapIsPaused = false {
         didSet {
+            pausedForSyntheticQuit = eventTapIsPaused
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: !eventTapIsPaused)
             }
@@ -330,10 +372,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyUp?.flags = .maskCommand
             keyUp?.postToPid(frontApp.processIdentifier)
         }
-        // 恢复拦截
+        // 恢复拦截。注意 postToPid 的合成事件走 per-PID 通道、不经会话 tap,
+        // 因此 tap 恢复后不会再次拦截到这条合成 ⌘Q。
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.eventTapIsPaused = false
-            self?.resetState()
+            guard let self else { return }
+            self.eventTapIsPaused = false
+            self.resetState()
         }
     }
 
@@ -362,7 +406,7 @@ final class OverlayWindow: NSWindow {
 
     init() {
         let size = CGSize(width: 240, height: 260)
-        // 显示在当前鼠标所在屏幕(拦截触发时用户焦点所在处)
+        // NSScreen.main = 键盘焦点所在屏幕(拦截触发时用户正在使用的屏)
         let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let x = screenFrame.midX - size.width / 2
         let y = screenFrame.midY - size.height / 2
@@ -397,45 +441,57 @@ final class ProgressIndicatorView: NSView {
 
     // 动画状态
     private var displayLink: CVDisplayLink?
+    private var displayLinkBox: UnsafeMutableRawPointer? // 保存 box 指针以便释放
     private var pulsePhase: CGFloat = 0
-    private var appeared = false
 
-    // 图标(用 SF Symbols 渲染成图片)
-    private lazy var symbolImage: NSImage? = {
-        let config = NSImage.SymbolConfiguration(pointSize: 20, weight: .medium)
-        let base = NSImage(systemSymbolName: "keyboard.command", accessibilityDescription: "Command")
+    // 图标:一次着色缓存,draw 每帧直接使用
+    private lazy var tintedIcon: NSImage? = {
+        guard let base = NSImage(systemSymbolName: "keyboard.command", accessibilityDescription: "Command")
             ?? NSImage(systemSymbolName: "command", accessibilityDescription: "Command")
             ?? NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Command")
-        return base?.withSymbolConfiguration(config)
+        else { return nil }
+        let config = NSImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+        guard let sized = base.withSymbolConfiguration(config) else { return nil }
+        let tinted = sized.copy() as! NSImage
+        tinted.lockFocus()
+        NSColor.white.withAlphaComponent(0.85).set()
+        NSRect(origin: .zero, size: sized.size).fill(using: .sourceAtop)
+        tinted.unlockFocus()
+        return tinted
     }()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        // 允许隐式动画
-        animatorProxy()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private func animatorProxy() {
-        // CVDisplayLink 驱动平滑动画(每帧重绘进度环/脉冲)
+    /// 显示时启动动画循环,隐藏时停止(避免常驻空转)
+    func startAnimation() {
+        guard displayLink == nil else { CVDisplayLinkStart(displayLink!); return }
         var link: CVDisplayLink?
         CVDisplayLinkCreateWithActiveCGDisplays(&link)
+        guard let link else { return }
         displayLink = link
-        if let link {
-            // 弱上下文:不 retain view,回调里校验存活,避免野指针/过度释放
-            weak var weakSelf = self
-            let opaque = Unmanaged.passRetained(WeakBox(weakSelf)).toOpaque()
-            CVDisplayLinkSetOutputCallback(link, { _, _, _, _, flagsOut, ctx in
-                let box = Unmanaged<WeakBox>.fromOpaque(ctx!).takeUnretainedValue()
-                if let view = box.value {
-                    DispatchQueue.main.async { view.tick() }
-                }
-                flagsOut.pointee = 0
-                return kCVReturnSuccess
-            }, opaque)
-            CVDisplayLinkStart(link)
+        // 弱引用盒子:回调不 retain view
+        let box = WeakBox(self)
+        let opaque = Unmanaged.passRetained(box).toOpaque()
+        displayLinkBox = opaque
+        CVDisplayLinkSetOutputCallback(link, { _, _, _, _, flagsOut, ctx in
+            let box = Unmanaged<WeakBox>.fromOpaque(ctx!).takeUnretainedValue()
+            if let view = box.value {
+                DispatchQueue.main.async { view.tick() }
+            }
+            flagsOut.pointee = 0
+            return kCVReturnSuccess
+        }, opaque)
+        CVDisplayLinkStart(link)
+    }
+
+    func stopAnimation() {
+        if let link = displayLink {
+            CVDisplayLinkStop(link)
         }
     }
 
@@ -449,12 +505,14 @@ final class ProgressIndicatorView: NSView {
         if let link = displayLink {
             CVDisplayLinkStop(link)
         }
+        if let opaque = displayLinkBox {
+            Unmanaged<WeakBox>.fromOpaque(opaque).release()
+        }
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
-            appeared = true
             // 入场缩放动画
             layer?.removeAllAnimations()
             let anim = CASpringAnimation(keyPath: "transform.scale")
@@ -465,7 +523,6 @@ final class ProgressIndicatorView: NSView {
             anim.stiffness = 190
             anim.duration = 0.45
             layer?.add(anim, forKey: "appear")
-            // 位置以 layer 锚点居中需要 transform;直接用 NSAnimationContext
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.35
                 self.animator().alphaValue = 1.0
@@ -543,15 +600,10 @@ final class ProgressIndicatorView: NSView {
         }
 
         // ── 中心:命令图标 + 倒计时数字 ──
-        // SF Symbol 模板图,手动着色;图标缺失时优雅降级(不绘制)
-        if let symbol = symbolImage {
-            let tinted = symbol.copy() as! NSImage
-            tinted.lockFocus()
-            NSColor.white.withAlphaComponent(0.85).set()
-            NSRect(origin: .zero, size: symbol.size).fill(using: .sourceAtop)
-            tinted.unlockFocus()
-            let iconSize = symbol.size
-            tinted.draw(
+        // 着色图标已缓存(lazy 一次),draw 直接绘制;缺失时优雅降级
+        if let icon = tintedIcon {
+            let iconSize = icon.size
+            icon.draw(
                 in: NSRect(
                     x: center.x - iconSize.width / 2,
                     y: center.y + 26,
@@ -600,6 +652,7 @@ extension AppDelegate {
         hudWindow?.progress.elapsed = 0
         hudWindow?.alphaValue = 0
         hudWindow?.orderFrontRegardless()
+        hudWindow?.progress.startAnimation() // 显示时才开启动画循环
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.18
             hudWindow?.animator().alphaValue = 1.0
@@ -618,6 +671,7 @@ extension AppDelegate {
         }, completionHandler: {
             w.orderOut(nil)
             w.alphaValue = 1
+            w.progress.stopAnimation() // 隐藏即停止空转
         })
     }
 }
