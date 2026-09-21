@@ -11,6 +11,7 @@
 [![Platform](https://img.shields.io/badge/macOS-13%2B-black?logo=apple&logoColor=white)](#系统要求)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white)](#项目结构)
 [![UI](https://img.shields.io/badge/UI-AppKit-1E90FF)](#工作原理)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/PandaBoby/SlowQ?style=flat&color=yellow)](https://github.com/PandaBoby/SlowQ/stargazers)
 
 **中文** · [English](README.en.md)
@@ -197,7 +198,17 @@ swift build -c release # 发布构建
 
 ## 许可证
 
-本仓库暂未指定开源许可证。在添加许可证前,默认保留所有权利。如需开源授权,建议添加 [MIT](https://choosealicense.com/licenses/mit/) 或 [Apache-2.0](https://choosealicense.com/licenses/apache-2.0/)。
+本项目基于 [Apache License 2.0](LICENSE) 开源。
+
+```text
+Copyright 2026 PandaBoby
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+```
 
 <div align="center">
 

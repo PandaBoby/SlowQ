@@ -11,6 +11,7 @@ A tiny native macOS utility that takes over the global ⌘Q shortcut
 [![Platform](https://img.shields.io/badge/macOS-13%2B-black?logo=apple&logoColor=white)](#requirements)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white)](#project-layout)
 [![UI](https://img.shields.io/badge/UI-AppKit-1E90FF)](#how-it-works)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/PandaBoby/SlowQ?style=flat&color=yellow)](https://github.com/PandaBoby/SlowQ/stargazers)
 
 [中文](README.md) · **English**
@@ -197,7 +198,17 @@ Re-run `./build-app.sh` after changing sources to repackage. Same command applie
 
 ## License
 
-No open-source license has been specified for this repository yet, so all rights are reserved by default. If you intend to open-source it, consider adding [MIT](https://choosealicense.com/licenses/mit/) or [Apache-2.0](https://choosealicense.com/licenses/apache-2.0/).
+Released under the [Apache License 2.0](LICENSE).
+
+```text
+Copyright 2026 PandaBoby
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+```
 
 <div align="center">
 
