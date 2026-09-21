@@ -65,7 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { t.invalidate(); return }
             if AXIsProcessTrusted() {
                 self.setupStatusItem()
-                if self.installEventTap() {
+                // quiet: 重试路径不弹模态窗(否则每秒一次弹窗风暴)
+                if self.installEventTap(quiet: true) {
                     t.invalidate()
                     self.log("权限已授予,事件拦截已安装")
                 } else {
@@ -79,9 +80,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Status item
 
     private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "SlowQ")
+        // 幂等:已存在则只刷新菜单,不重复创建(避免重试循环堆积菜单栏图标)
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            if let button = statusItem.button {
+                button.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "SlowQ")
+            }
         }
         rebuildMenu()
     }
@@ -143,7 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 保存 userInfo 指针以便释放
     private var userInfoPointer: UnsafeMutableRawPointer?
 
-    private func installEventTap() -> Bool {
+    /// - Parameter quiet: true 时失败不弹权限提示窗(用于轮询重试路径,避免每秒弹窗)
+    private func installEventTap(quiet: Bool = false) -> Bool {
         // 已装上则不重复
         if eventTap != nil { return true }
 
@@ -170,7 +175,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 失败路径:释放上面 passRetained 的引用,避免反复启动时泄漏
             Unmanaged<AppDelegate>.fromOpaque(selfPtr).release()
             log("event tap 创建失败(权限不足)")
-            showPermissionsAlert()
+            if !quiet {
+                showPermissionsAlert()
+            }
             return false
         }
 
@@ -289,7 +296,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let fm = FileManager.default
             if !fm.fileExists(atPath: path) {
                 guard fm.createFile(atPath: path, contents: nil) else {
-                    try? data.write(to: URL(fileURLWithPath: "/tmp/slowq-fallback.log"), options: .atomic)
+                    // 兜底路径也走追加,避免覆盖
+                    let fallback = URL(fileURLWithPath: "/tmp/slowq-fallback.log")
+                    if let fh = FileHandle(forWritingAtPath: fallback.path) {
+                        defer { try? fh.close() }
+                        fh.seekToEndOfFile()
+                        fh.write(data)
+                    }
                     return
                 }
             }
@@ -333,21 +346,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 暂停窗口标记:tap 物理禁用期间,到达的物理 ⌘Q 也不放行(handleEvent 层兜底)
-    private var pausedForSyntheticQuit = false {
-        didSet {
-            // 与 eventTapIsPaused 同步生命周期
-        }
-    }
-
+    /// 暂停状态(单一来源):tap 物理禁用 + 物理按键不放行,两者同生命周期。
+    /// 赋值处:fireQuit 置 true / sendQuitToActiveApp 完成后置 false。
     private var eventTapIsPaused = false {
         didSet {
-            pausedForSyntheticQuit = eventTapIsPaused
+            guard eventTapIsPaused != oldValue else { return }
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: !eventTapIsPaused)
             }
         }
     }
+
+    /// handleEvent 层兜底:暂停窗口内到达的物理 ⌘Q 也不放行
+    private var pausedForSyntheticQuit: Bool { eventTapIsPaused }
 
     private func waitForCommandReleaseThenSend() {
         // 轮询等 ⌘ 松开,然后发送合成 ⌘Q
