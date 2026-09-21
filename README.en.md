@@ -68,7 +68,7 @@ When you press `⌘Q`, this overlay appears in the center of the screen (the rin
 
 ### Option 1 — Download a prebuilt package (recommended)
 
-Grab it from [**Releases**](https://github.com/PandaBoby/SlowQ/releases/latest):
+Grab it from [**Releases**](https://github.com/PandaBoby/SlowQ/releases/latest) (mirrored on Gitee: [**Gitee Releases**](https://gitee.com/pandaboby/SlowQ/releases)):
 
 | File | Notes |
 |---|---|
@@ -90,7 +90,7 @@ Alternatively **right-click** `SlowQ.app` in Finder → **Open** → **Open** ag
 ### Option 2 — Build from source
 
 ```bash
-git clone https://github.com/PandaBoby/SlowQ.git
+git clone https://github.com/PandaBoby/SlowQ.git   # or Gitee: https://gitee.com/pandaboby/SlowQ.git
 cd SlowQ
 ./build-app.sh          # builds a universal binary into SlowQ/.build-app/SlowQ.app
 open SlowQ/.build-app/SlowQ.app
@@ -100,7 +100,13 @@ Requires Xcode Command Line Tools (`xcode-select --install`). `build-app.sh` han
 
 > The dev build lands in the hidden `.build-app/` directory. Spotlight skips dot-directories, so it **never shows up in Launchpad or Finder search** and can't be confused with the `/Applications` copy.
 
-For release artifacts use `./release.sh` (writes zip/dmg into `dist/`); add `--publish` to create the GitHub Release directly.
+For release artifacts use `./release.sh` (writes zip/dmg into `dist/`):
+
+```bash
+./release.sh --publish          # publish the GitHub Release
+./release.sh --gitee            # publish the Gitee Release (needs ~/.token/gitee-token)
+./release.sh --publish --gitee  # publish to both
+```
 
 ## ⚠️ Accessibility permission is required
 

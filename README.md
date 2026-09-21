@@ -68,7 +68,7 @@ SlowQ 把 `⌘Q` 变成"需要按住"的操作:按下时屏幕中央浮出倒计
 
 ### 方式一:下载预编译包(推荐)
 
-从 [**Releases**](https://github.com/PandaBoby/SlowQ/releases/latest) 下载:
+从 [**Releases**](https://github.com/PandaBoby/SlowQ/releases/latest) 下载(Gitee 镜像同步发布:[**Gitee Releases**](https://gitee.com/pandaboby/SlowQ/releases)):
 
 | 文件 | 说明 |
 |---|---|
@@ -90,7 +90,7 @@ xattr -dr com.apple.quarantine /Applications/SlowQ.app
 ### 方式二:从源码构建
 
 ```bash
-git clone https://github.com/PandaBoby/SlowQ.git
+git clone https://github.com/PandaBoby/SlowQ.git   # 或 Gitee: https://gitee.com/pandaboby/SlowQ.git
 cd SlowQ
 ./build-app.sh          # 构建通用二进制并打包为 SlowQ/.build-app/SlowQ.app
 open SlowQ/.build-app/SlowQ.app
@@ -100,7 +100,13 @@ open SlowQ/.build-app/SlowQ.app
 
 > 开发构建产物放在隐藏目录 `.build-app/` 下,Spotlight 不索引点号目录,因此它**不会出现在 Launchpad 或 Finder 搜索里**,不会和 `/Applications` 里的正式版重复。
 
-发布打包用 `./release.sh`(产出 zip/dmg 到 `dist/`),加 `--publish` 可直接创建 GitHub Release。
+发布打包用 `./release.sh`(产出 zip/dmg 到 `dist/`):
+
+```bash
+./release.sh --publish          # 发布 GitHub Release
+./release.sh --gitee            # 发布 Gitee Release(需 ~/.token/gitee-token)
+./release.sh --publish --gitee  # 两边同时发布
+```
 
 ## ⚠️ 首次运行必须授权
 
