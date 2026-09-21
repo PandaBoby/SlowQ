@@ -34,9 +34,16 @@ cleanup() {
     if [ -n "$MOUNT_POINT" ] && [ -d "$MOUNT_POINT" ]; then
         hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null || true
     fi
-    rm -rf "$STAGE" "$TMP_DMG" 2>/dev/null || true
+    rm -rf "$STAGE" "$TMP_DMG" "${VOL_TMP:-}" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+# ── 0. 预清理:卸载同名残留卷 ──
+# 若存在 "/Volumes/SlowQ 1" 这类残留,Finder 里会出现两个同名磁盘,
+# AppleScript 的 `disk "SlowQ"` 无法定位,eject 会静默失败。
+while IFS= read -r mp; do
+    [ -n "$mp" ] && hdiutil detach "$mp" -force -quiet 2>/dev/null || true
+done < <(mount | grep -i " on /Volumes/${VOLNAME}" | sed 's/.* on \(.*\) (.*/\1/')
 
 # ── 1. 暂存目录 ──
 cp -R "$APP_PATH" "$STAGE/"
@@ -46,10 +53,32 @@ ln -s /Applications "$STAGE/Applications"
 mkdir -p "$STAGE/.background"
 swift "$REPO_DIR/tools/gen-dmgbackground.swift" "$STAGE/.background" "$WIN_W" "$WIN_H" "$LOGO"
 
-# 卷图标(已挂载的磁盘在 Finder 里显示蜗牛)
-APP_ICNS="$APP_PATH/Contents/Resources/AppIcon.icns"
-if [ -f "$APP_ICNS" ]; then
-    cp "$APP_ICNS" "$STAGE/.VolumeIcon.icns"
+# 卷图标:自绘的磁盘造型(圆角机身 + 接缝 + 指示灯 + 白色 logo),
+# 比直接用 App 图标更像一个"安装盘",风格与背景横幅统一。
+#
+# ⚠️ 关键:必须先只在临时目录生成 icns,**稍后写入已挂载的卷**。
+# 实测:若在 hdiutil create 之前把 .VolumeIcon.icns 放进暂存目录,
+# Finder 打开卷设置视图时会把它删掉,最终镜像里就没有卷图标了。
+VOL_TMP=$(mktemp -d)
+VOL_ICNS="$VOL_TMP/VolumeIcon.icns"
+if swift "$REPO_DIR/tools/gen-volumeicon.swift" "$VOL_TMP/vol-1024.png" 1024 "$LOGO"; then
+    VOLSET="$VOL_TMP/VolumeIcon.iconset"
+    mkdir -p "$VOLSET"
+    for s in 16 32 64 128 256 512 1024; do
+        sips -z $s $s "$VOL_TMP/vol-1024.png" --out "$VOL_TMP/v$s.png" -s format png >/dev/null
+    done
+    cp "$VOL_TMP/v16.png"   "$VOLSET/icon_16x16.png"
+    cp "$VOL_TMP/v32.png"   "$VOLSET/icon_16x16@2x.png"
+    cp "$VOL_TMP/v32.png"   "$VOLSET/icon_32x32.png"
+    cp "$VOL_TMP/v64.png"   "$VOLSET/icon_32x32@2x.png"
+    cp "$VOL_TMP/v128.png"  "$VOLSET/icon_128x128.png"
+    cp "$VOL_TMP/v256.png"  "$VOLSET/icon_128x128@2x.png"
+    cp "$VOL_TMP/v256.png"  "$VOLSET/icon_256x256.png"
+    cp "$VOL_TMP/v512.png"  "$VOLSET/icon_256x256@2x.png"
+    cp "$VOL_TMP/v512.png"  "$VOLSET/icon_512x512.png"
+    cp "$VOL_TMP/v1024.png" "$VOLSET/icon_512x512@2x.png"
+    iconutil -c icns "$VOLSET" -o "$VOL_ICNS"
+    echo "   ✓ 卷图标已生成(待写入镜像)"
 fi
 
 # ── 2. 可读写临时镜像 ──
@@ -88,9 +117,20 @@ tell application "Finder"
 end tell
 APPLESCRIPT
 
-# 卷自定义图标标志(需在卸载前设置)
-if [ -f "$MOUNT_POINT/.VolumeIcon.icns" ]; then
+# ── 写入卷图标 ──
+# 必须在 Finder 设置视图之后:Finder 打开卷时会把暂存阶段带进来的
+# .VolumeIcon.icns 删掉,所以这里在挂载的卷上现写。
+if [ -f "$VOL_ICNS" ]; then
+    cp "$VOL_ICNS" "$MOUNT_POINT/.VolumeIcon.icns"
     SetFile -a C "$MOUNT_POINT" 2>/dev/null || true
+    # 必须 sync:否则文件还在页缓存里就退盘,镜像里会丢
+    sync
+    sleep 1
+    if [ -f "$MOUNT_POINT/.VolumeIcon.icns" ]; then
+        echo "   ✓ 卷图标已写入镜像"
+    else
+        echo "   ⚠️  卷图标写入失败"
+    fi
 fi
 
 # ── 卸载:必须交给 Finder eject ──
@@ -99,7 +139,7 @@ fi
 # 让 Finder 自己退盘,它才会先把新状态刷进 .DS_Store。
 sleep 2
 osascript -e "tell application \"Finder\" to eject disk \"$VOLNAME\"" >/dev/null 2>&1 || true
-for _ in $(seq 1 10); do
+for _ in $(seq 1 25); do
     mount | grep -q "on $MOUNT_POINT" || break
     sleep 1
 done
