@@ -10,6 +10,15 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/SlowQ "$APP/Contents/MacOS/SlowQ"
 
+# SwiftPM 资源 bundle(状态栏图标)
+if [ -d ".build/release/SlowQ_SlowQ.bundle" ]; then
+    cp -R .build/release/SlowQ_SlowQ.bundle "$APP/Contents/Resources/"
+    echo "📦 资源 bundle 已打包"
+elif [ -d ".build/out/Products/Release/SlowQ_SlowQ.bundle" ]; then
+    cp -R .build/out/Products/Release/SlowQ_SlowQ.bundle "$APP/Contents/Resources/"
+    echo "📦 资源 bundle 已打包(out 布局)"
+fi
+
 # ── 图标:从 iconset 生成 icns(若图标源不存在则跳过,不阻断构建)──
 ICONSET_SRC="${SLOWQ_ICONSET:-$HOME/Downloads/AppIcons/Assets.xcassets/AppIcon.appiconset}"
 ICONSET_TMP="$APP/Contents/Resources/AppIcon.iconset"

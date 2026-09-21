@@ -79,11 +79,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Status item
 
+    /// 状态栏图标:优先使用自定义图标(bundle 资源),缺失时回退系统 ⏳ 符号
+    private func loadStatusIcon() -> NSImage? {
+        // SwiftPM 资源 bundle:SlowQ_SlowQ.bundle
+        let candidates = [
+            Bundle.main.resourceURL?.appendingPathComponent("SlowQ_SlowQ.bundle"),
+            Bundle(for: AppDelegate.self).resourceURL,
+        ].compactMap { $0 }
+
+        // Retina 状态栏约 16pt(32px@2x);按屏幕 backingScale 选择
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let name = scale > 1.5 ? "statusbar-32" : "statusbar-16"
+
+        for base in candidates {
+            if let url = base.appendingPathComponent("Contents/Resources/\(name).png") as URL?,
+               FileManager.default.fileExists(atPath: url.path) {
+                return NSImage(contentsOf: url)
+            }
+            // 直接资源目录布局(非 bundle 结构)
+            if let url = base.appendingPathComponent("\(name).png") as URL?,
+               FileManager.default.fileExists(atPath: url.path) {
+                return NSImage(contentsOf: url)
+            }
+        }
+        return nil
+    }
+
     private func setupStatusItem() {
         // 幂等:已存在则只刷新菜单,不重复创建(避免重试循环堆积菜单栏图标)
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            if let button = statusItem.button {
+        }
+        if let button = statusItem.button {
+            if let icon = loadStatusIcon() {
+                // 模板模式跟随菜单栏深浅色;若图标为彩色设计则关闭模板
+                icon.isTemplate = false
+                icon.size = NSSize(width: 18, height: 18) // 状态栏标准视觉尺寸
+                button.image = icon
+            } else {
                 button.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "SlowQ")
             }
         }
