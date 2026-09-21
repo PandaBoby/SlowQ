@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var fired = false // 本轮是否已放行/执行退出
 
     private var hudWindow: OverlayWindow?
+    var toastWindow: ToastWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("启动")
@@ -272,7 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(login)
 
         let hide = NSMenuItem(
-            title: "隐藏菜单栏图标", action: #selector(hideStatusItem), keyEquivalent: ""
+            title: "隐藏菜单栏图标(再次打开应用可恢复)", action: #selector(hideStatusItem), keyEquivalent: ""
         )
         hide.target = self
         menu.addItem(hide)
@@ -328,8 +329,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItemHidden = true
         autoHideTimer?.invalidate()
         autoHideTimer = nil
-        statusItem.isVisible = false
-        log("菜单栏图标已隐藏(重新启动应用可再次显示)")
+        // 先弹提示再隐藏,让用户当场就知道怎么找回
+        showToast("菜单栏图标已隐藏 · 再次打开 慢Q 即可恢复")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.statusItem.isVisible = false
+        }
+        log("菜单栏图标已隐藏(再次打开应用可恢复)")
+    }
+
+    /// 用户再次打开应用(双击 Finder / 启动台 / `open`)时,把菜单栏图标恢复出来。
+    /// 这是「隐藏图标」唯一的、可发现的自救入口 —— 之前只靠"重启后 10 秒窗口",
+    /// 但应用一直在后台运行,重新打开并不会重启进程,那个窗口根本不会触发。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if statusItemHidden || statusItem.isVisible == false {
+            statusItemHidden = false
+            autoHideTimer?.invalidate()
+            autoHideTimer = nil
+            statusItem.isVisible = true
+            rebuildMenu()
+            log("重新打开应用:菜单栏图标已恢复")
+            showToast("菜单栏图标已恢复")
+        }
+        return false
     }
 
     /// 打开菜单即取消待执行的自动隐藏(用户显然还需要这个图标)
@@ -957,7 +978,68 @@ final class ProgressIndicatorView: NSView {
     }
 }
 
+// MARK: - 轻提示(Toast)
+
+/// 短暂的屏幕提示条:用于"图标已隐藏/已恢复"这类一次性反馈。
+/// 不依赖通知权限,也不抢焦点(非激活面板)。
+final class ToastWindow: NSWindow {
+    private let label = NSTextField(labelWithString: "")
+
+    init(text: String) {
+        let w: CGFloat = 380, h: CGFloat = 54
+        let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        super.init(
+            contentRect: NSRect(x: screen.midX - w / 2, y: screen.midY - 140, width: w, height: h),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        isOpaque = false
+        backgroundColor = .clear
+        level = .screenSaver
+        ignoresMouseEvents = true
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        hasShadow = false
+
+        let card = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+        card.wantsLayer = true
+        card.layer?.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 0.88).cgColor
+        card.layer?.cornerRadius = 14
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.14).cgColor
+
+        label.stringValue = text
+        label.alignment = .center
+        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.textColor = .white
+        label.frame = NSRect(x: 12, y: (h - 20) / 2, width: w - 24, height: 20)
+        card.addSubview(label)
+        contentView = card
+    }
+}
+
 extension AppDelegate {
+    /// 弹出一条提示,2.6 秒后自动淡出
+    func showToast(_ text: String) {
+        toastWindow?.orderOut(nil)
+        let w = ToastWindow(text: text)
+        toastWindow = w
+        w.alphaValue = 0
+        w.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.18
+            w.animator().alphaValue = 1
+        })
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak self, weak w] in
+            guard let w else { return }
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.3
+                w.animator().alphaValue = 0
+            }, completionHandler: {
+                w.orderOut(nil)
+                if self?.toastWindow === w { self?.toastWindow = nil }
+            })
+        }
+    }
+
     func showHUD() {
         if hudWindow == nil { hudWindow = OverlayWindow() }
         hudWindow?.progress.total = holdSeconds

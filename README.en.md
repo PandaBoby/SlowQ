@@ -145,13 +145,18 @@ Once granted, a snail icon appears in the menu bar. To verify it's active, check
 
 **Getting the menu bar icon back after hiding it**
 
-Interception **keeps working** while the icon is hidden, but there is no menu entry left to click. To make sure the icon can never be lost for good, there is an escape hatch:
+Interception **keeps working** while the icon is hidden — there is just no menu entry left to click. To bring it back:
 
-- **Every launch shows the icon for the first 10 seconds**, with a menu hint reading "⏱ the icon will hide 10 s after launch"
-- **Opening the menu once during those 10 seconds cancels the hide** for that session
-- So to get the icon back: **quit and relaunch 慢Q** (or log out and back in)
+> ### 🐌 Simply open 慢Q again
+> Click 慢Q once more in **Launchpad / Applications / the Dock** (even though it is already running in the background) and the icon returns immediately, with a "menu bar icon restored" toast in the centre of the screen.
 
-> Implementation note: macOS persists status item visibility, so a freshly created item stays hidden after a previous hide. The app therefore forces the item visible on every launch and lets a timer decide whether to hide it again.
+Details:
+
+- Hiding shows a toast straight away — **"menu bar icon hidden · open 慢Q again to restore"** — so the way back is explained at the moment it matters
+- Re-opening does **not** start a second process; it just shows the icon again and clears the hidden setting
+- Every launch also shows the icon for the first **10 seconds**; opening the menu during that window keeps it too
+
+> Implementation note: macOS persists status item visibility in the app's preferences (`NSStatusItem VisibleCC …`), so a freshly created item is still hidden after a previous hide. The app therefore forces the item visible on every launch and implements `applicationShouldHandleReopen` to react to being opened again.
 
 ## How it works
 
