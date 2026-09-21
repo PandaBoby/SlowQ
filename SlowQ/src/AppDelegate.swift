@@ -79,30 +79,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Status item
 
-    /// 状态栏图标:优先使用自定义图标(bundle 资源),缺失时回退系统 ⏳ 符号
-    private func loadStatusIcon() -> NSImage? {
-        // SwiftPM 资源 bundle:SlowQ_SlowQ.bundle
+    /// 定位 SwiftPM 资源 bundle 中的资源目录
+    private func statusIconDirectory() -> URL? {
         let candidates = [
-            Bundle.main.resourceURL?.appendingPathComponent("SlowQ_SlowQ.bundle"),
+            Bundle.main.resourceURL?.appendingPathComponent("SlowQ_SlowQ.bundle/Contents/Resources"),
             Bundle(for: AppDelegate.self).resourceURL,
+            Bundle.main.resourceURL,
         ].compactMap { $0 }
-
-        // Retina 状态栏约 16pt(32px@2x);按屏幕 backingScale 选择
-        let scale = NSScreen.main?.backingScaleFactor ?? 2
-        let name = scale > 1.5 ? "statusbar-32" : "statusbar-16"
-
-        for base in candidates {
-            if let url = base.appendingPathComponent("Contents/Resources/\(name).png") as URL?,
-               FileManager.default.fileExists(atPath: url.path) {
-                return NSImage(contentsOf: url)
-            }
-            // 直接资源目录布局(非 bundle 结构)
-            if let url = base.appendingPathComponent("\(name).png") as URL?,
-               FileManager.default.fileExists(atPath: url.path) {
-                return NSImage(contentsOf: url)
-            }
+        for dir in candidates where FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("statusbar.png").path
+        ) {
+            return dir
         }
         return nil
+    }
+
+    /// 菜单栏图标:加载生成的 1x/2x 资源为多表示图。
+    ///
+    /// 1x 文件的像素尺寸就是逻辑点数,据此设置 size,避免被拉伸变形;
+    /// 2x 作为 Retina 表示图由 AppKit 自动选用。缺失时回退系统 ⏳ 符号。
+    private func loadStatusIcon() -> NSImage? {
+        guard let dir = statusIconDirectory(),
+              let data1x = try? Data(contentsOf: dir.appendingPathComponent("statusbar.png")),
+              let rep1x = NSBitmapImageRep(data: data1x) else {
+            return nil
+        }
+        let logicalSize = NSSize(width: rep1x.pixelsWide, height: rep1x.pixelsHigh)
+        let image = NSImage(size: logicalSize)
+
+        rep1x.size = logicalSize
+        image.addRepresentation(rep1x)
+
+        if let data2x = try? Data(contentsOf: dir.appendingPathComponent("statusbar@2x.png")),
+           let rep2x = NSBitmapImageRep(data: data2x) {
+            rep2x.size = logicalSize
+            image.addRepresentation(rep2x)
+        }
+
+        // 模板模式:菜单栏自动适配深浅色
+        image.isTemplate = true
+        return image
     }
 
     private func setupStatusItem() {
@@ -112,10 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let button = statusItem.button {
             if let icon = loadStatusIcon() {
-                // 模板模式:自动适配菜单栏深浅色(纯黑形状 + alpha 通道)
-                icon.isTemplate = true
-                icon.size = NSSize(width: 18, height: 18) // 状态栏标准视觉尺寸
-                button.image = icon
+                button.image = icon // 尺寸由资源自身决定,不强制缩放
             } else {
                 button.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "SlowQ")
             }

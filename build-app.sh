@@ -1,7 +1,17 @@
 #!/bin/bash
-# SlowQ 打包脚本:构建 release 版本并打包为 SlowQ.app(含图标)
+# SlowQ 打包脚本:构建 release 版本并打包为 SlowQ.app(含 App 图标 + 菜单栏图标)
 set -e
 cd "$(dirname "$0")/SlowQ"
+
+# ── 菜单栏图标:从源图标生成(裁透明边距 + 等比缩放到 17pt 高)──
+# 必须在 swift build 之前,资源清单才会打到 .bundle 里
+ICON_SRC="${SLOWQ_ICON:-$PWD/icon_蜗牛.png}"
+if [ -f "$ICON_SRC" ]; then
+    echo "🐌 生成菜单栏图标…"
+    swift ../tools/gen-statusbar.swift "$ICON_SRC" "$PWD/src/Resources"
+else
+    echo "⚠️  未找到图标源: $ICON_SRC"
+fi
 
 xcrun swift build -c release
 
@@ -10,7 +20,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/SlowQ "$APP/Contents/MacOS/SlowQ"
 
-# SwiftPM 资源 bundle(状态栏图标)
+# SwiftPM 资源 bundle(菜单栏图标)
 if [ -d ".build/release/SlowQ_SlowQ.bundle" ]; then
     cp -R .build/release/SlowQ_SlowQ.bundle "$APP/Contents/Resources/"
     echo "📦 资源 bundle 已打包"
@@ -19,14 +29,12 @@ elif [ -d ".build/out/Products/Release/SlowQ_SlowQ.bundle" ]; then
     echo "📦 资源 bundle 已打包(out 布局)"
 fi
 
-# ── 图标:从单一原图生成全尺寸 icns ──
-# 图标源:优先 SLOWQ_ICONSET 环境变量,默认用项目内的 蜗牛.png(自包含,当前目录已是 SlowQ/)
-ICONSET_SRC="${SLOWQ_ICONSET:-$PWD/蜗牛.png}"
+# ── App 图标:从同一源图生成全尺寸 icns ──
 ICONSET_TMP="$APP/Contents/Resources/AppIcon.iconset"
-if [ -n "$ICONSET_SRC" ] && [ -f "$ICONSET_SRC" ]; then
+if [ -f "$ICON_SRC" ]; then
     IT=$(mktemp -d)
     for s in 16 32 64 128 256 512 1024; do
-        sips -z $s $s "$ICONSET_SRC" --out "$IT/$s.png" -s format png >/dev/null
+        sips -z $s $s "$ICON_SRC" --out "$IT/$s.png" -s format png >/dev/null
     done
     mkdir -p "$ICONSET_TMP"
     cp "$IT/16.png"   "$ICONSET_TMP/icon_16x16.png"
