@@ -112,8 +112,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let button = statusItem.button {
             if let icon = loadStatusIcon() {
-                // 模板模式跟随菜单栏深浅色;若图标为彩色设计则关闭模板
-                icon.isTemplate = false
+                // 模板模式:自动适配菜单栏深浅色(纯黑形状 + alpha 通道)
+                icon.isTemplate = true
                 icon.size = NSSize(width: 18, height: 18) // 状态栏标准视觉尺寸
                 button.image = icon
             } else {

@@ -19,26 +19,34 @@ elif [ -d ".build/out/Products/Release/SlowQ_SlowQ.bundle" ]; then
     echo "📦 资源 bundle 已打包(out 布局)"
 fi
 
-# ── 图标:从 iconset 生成 icns(若图标源不存在则跳过,不阻断构建)──
-ICONSET_SRC="${SLOWQ_ICONSET:-$HOME/Downloads/AppIcons/Assets.xcassets/AppIcon.appiconset}"
+# ── 图标:从单一原图生成全尺寸 icns(来源可为任何 iconset/单图)──
+# 图标源:优先 SLOWQ_ICONSET 环境变量,其次自动探测 Downloads 下的图标包
+ICONSET_SRC="${SLOWQ_ICONSET:-}"
+if [ -z "$ICONSET_SRC" ] && [ -f "$HOME/Downloads/app-icons-66821d15-eb39-482e-ac7b-391a28422ca4_1/original/icon-1024.png" ]; then
+    ICONSET_SRC="$HOME/Downloads/app-icons-66821d15-eb39-482e-ac7b-391a28422ca4_1/original/icon-1024.png"
+fi
 ICONSET_TMP="$APP/Contents/Resources/AppIcon.iconset"
-if [ -d "$ICONSET_SRC" ]; then
+if [ -n "$ICONSET_SRC" ] && [ -f "$ICONSET_SRC" ]; then
+    IT=$(mktemp -d)
+    for s in 16 32 64 128 256 512 1024; do
+        sips -z $s $s "$ICONSET_SRC" --out "$IT/$s.png" -s format png >/dev/null
+    done
     mkdir -p "$ICONSET_TMP"
-    cp "$ICONSET_SRC/16.png"    "$ICONSET_TMP/icon_16x16.png"
-    cp "$ICONSET_SRC/32.png"    "$ICONSET_TMP/icon_16x16@2x.png"
-    cp "$ICONSET_SRC/32.png"    "$ICONSET_TMP/icon_32x32.png"
-    cp "$ICONSET_SRC/64.png"    "$ICONSET_TMP/icon_32x32@2x.png"
-    cp "$ICONSET_SRC/128.png"   "$ICONSET_TMP/icon_128x128.png"
-    cp "$ICONSET_SRC/256.png"   "$ICONSET_TMP/icon_128x128@2x.png"
-    cp "$ICONSET_SRC/256.png"   "$ICONSET_TMP/icon_256x256.png"
-    cp "$ICONSET_SRC/512.png"   "$ICONSET_TMP/icon_256x256@2x.png"
-    cp "$ICONSET_SRC/512.png"   "$ICONSET_TMP/icon_512x512.png"
-    cp "$ICONSET_SRC/1024.png"  "$ICONSET_TMP/icon_512x512@2x.png"
+    cp "$IT/16.png"   "$ICONSET_TMP/icon_16x16.png"
+    cp "$IT/32.png"   "$ICONSET_TMP/icon_16x16@2x.png"
+    cp "$IT/32.png"   "$ICONSET_TMP/icon_32x32.png"
+    cp "$IT/64.png"   "$ICONSET_TMP/icon_32x32@2x.png"
+    cp "$IT/128.png"  "$ICONSET_TMP/icon_128x128.png"
+    cp "$IT/256.png"  "$ICONSET_TMP/icon_128x128@2x.png"
+    cp "$IT/256.png"  "$ICONSET_TMP/icon_256x256.png"
+    cp "$IT/512.png"  "$ICONSET_TMP/icon_256x256@2x.png"
+    cp "$IT/512.png"  "$ICONSET_TMP/icon_512x512.png"
+    cp "$IT/1024.png" "$ICONSET_TMP/icon_512x512@2x.png"
     iconutil -c icns "$ICONSET_TMP" -o "$APP/Contents/Resources/AppIcon.icns"
-    rm -rf "$ICONSET_TMP"
+    rm -rf "$ICONSET_TMP" "$IT"
     echo "🎨 图标已集成"
 else
-    echo "⚠️  未找到图标源($ICONSET_SRC),跳过图标"
+    echo "⚠️  未找到图标源,跳过图标"
 fi
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
