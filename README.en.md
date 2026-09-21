@@ -132,7 +132,7 @@ Once granted, a snail icon appears in the menu bar. To verify it's active, check
 |---|---|
 | Disable / Enable ⌘Q interception | Temporarily turn interception off (e.g. to quit several apps in a row) |
 | Hold duration → 1/2/3/5 s | Adjust the hold time; persisted automatically |
-| Menu bar icon: Color / Mono | Switch between the original colors and a monochrome template (mono adapts to light/dark menu bars) |
+| Menu bar icon: Auto / Mono / Color | Click to cycle. **Auto** (default) detects whether the artwork is monochrome and applies a template image when it is — macOS then renders it white on dark menu bars and black on light ones. Color art stays in full color |
 | Quit SlowQ (⌥⌘Q) | Quit SlowQ itself (`⌥⌘Q` avoids self-interception) |
 
 ## How it works
@@ -209,9 +209,11 @@ SlowQ/
    ```
    > Measured behaviour: merely toggling the switch off and on does **not** restore the grant — you must `tccutil reset` and re-tick.
 
-**Icon invisible on a dark menu bar**
+**Icon hard to see on a dark menu bar**
 
-The current artwork is a pure black silhouette, so color mode is invisible against a dark menu bar. Switch to **Mono** in the menu to adapt automatically.
+SlowQ defaults to **Auto** mode: when the artwork is monochrome (e.g. a pure black silhouette) it is used as a template image, so macOS renders it white on dark menu bars and black on light ones — never a black glyph on a black bar.
+
+If you previously forced **Color** while the artwork happens to be solid black, the icon will vanish on a dark menu bar. Click `Menu bar icon: Color (manual)` to cycle back to **Auto**.
 
 **Changing the icon**
 

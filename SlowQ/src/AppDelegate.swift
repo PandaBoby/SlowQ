@@ -28,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         registerTerminateObserver()
 
+        // 无论是否已授权都先显示菜单栏图标,让用户能立即看到应用已启动、
+        // 并可随时从菜单退出或打开权限设置(否则未授权时图标不出现,容易被当成没启动)。
+        setupStatusItem()
+
         // 主动检查辅助功能权限
         let trusted = AXIsProcessTrustedWithOptions(
             [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
@@ -35,7 +39,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         if trusted {
             log("辅助功能权限 OK")
-            setupStatusItem()
             if !installEventTap() {
                 // 启动时已可信但 tap 创建失败(罕见):进入轮询重试
                 pollForPermission()
@@ -98,7 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// 1x 文件的像素尺寸就是逻辑点数,据此设置 size,避免被拉伸变形;
     /// 2x 作为 Retina 表示图由 AppKit 自动选用。缺失时回退系统 ⏳ 符号。
-    /// 是否走模板模式由菜单中的开关控制(彩色 / 单色)。
+    ///
+    /// 模板模式由 `statusIconTemplateOverride` 决定:未设置时**自动识别** ——
+    /// 若图标本身是单色(如纯黑剪影),用模板模式(深色菜单栏自动变白);
+    /// 有彩色信息才用彩色模式,避免黑色图标在深色菜单栏上隐形。
     private func loadStatusIcon() -> NSImage? {
         guard let dir = statusIconDirectory(),
               let data1x = try? Data(contentsOf: dir.appendingPathComponent("statusbar.png")),
@@ -117,19 +123,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             image.addRepresentation(rep2x)
         }
 
-        // 模板模式:菜单栏自动适配深浅色(丢失颜色,只保留轮廓)
-        // 彩色模式:保留图标原色
-        image.isTemplate = statusIconTemplate
+        image.isTemplate = statusIconTemplateOverride ?? isMonochrome(rep1x)
         return image
     }
 
-    /// 菜单栏图标是否使用模板(单色)模式,持久化到 UserDefaults
-    private var statusIconTemplate: Bool {
-        get { UserDefaults.standard.bool(forKey: "statusIconTemplate") }
+    /// 判断图标是否为单色(所有不透明像素的 RGB 三通道差异都很小)
+    private func isMonochrome(_ rep: NSBitmapImageRep) -> Bool {
+        var sampled = 0
+        var maxSpread: CGFloat = 0
+        for x in 0..<rep.pixelsWide {
+            for y in 0..<rep.pixelsHigh {
+                guard let c = rep.colorAt(x: x, y: y), c.alphaComponent > 0.5 else { continue }
+                let r = c.redComponent, g = c.greenComponent, b = c.blueComponent
+                let spread = max(r, max(g, b)) - min(r, min(g, b))
+                maxSpread = max(maxSpread, spread)
+                sampled += 1
+            }
+        }
+        guard sampled > 0 else { return true } // 全透明 → 当单色处理
+        return maxSpread < 0.12 // 阈值:明显有色才算彩色
+    }
+
+    /// 模板模式覆盖值:nil = 自动识别,true = 强制单色,false = 强制彩色
+    private var statusIconTemplateOverride: Bool? {
+        get { UserDefaults.standard.object(forKey: "statusIconTemplate") as? Bool }
         set {
-            UserDefaults.standard.set(newValue, forKey: "statusIconTemplate")
+            if let v = newValue {
+                UserDefaults.standard.set(v, forKey: "statusIconTemplate")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "statusIconTemplate")
+            }
             setupStatusItem() // 立即应用
         }
+    }
+
+    /// 菜单中显示的当前生效模式
+    private func statusIconModeLabel() -> String {
+        if let forced = statusIconTemplateOverride {
+            return forced ? "单色(手动)" : "彩色(手动)"
+        }
+        guard let dir = statusIconDirectory(),
+              let data = try? Data(contentsOf: dir.appendingPathComponent("statusbar.png")),
+              let rep = NSBitmapImageRep(data: data) else { return "自动" }
+        return isMonochrome(rep) ? "自动 · 单色" : "自动 · 彩色"
     }
 
     private func setupStatusItem() {
@@ -140,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             if let icon = loadStatusIcon() {
                 button.image = icon // 尺寸由资源自身决定,不强制缩放
-                log("状态栏图标: \(Int(icon.size.width))x\(Int(icon.size.height))pt, 按钮=\(button.frame.size), thickness=\(NSStatusBar.system.thickness)")
+                log("状态栏图标: \(Int(icon.size.width))x\(Int(icon.size.height))pt, 模式=\(statusIconModeLabel()), isTemplate=\(icon.isTemplate)")
             } else {
                 button.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "SlowQ")
             }
@@ -174,11 +210,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         let iconToggle = NSMenuItem(
-            title: "菜单栏图标:\(statusIconTemplate ? "单色" : "彩色")",
-            action: #selector(toggleIconStyle), keyEquivalent: ""
+            title: "菜单栏图标:\(statusIconModeLabel())",
+            action: #selector(cycleIconStyle), keyEquivalent: ""
         )
         iconToggle.target = self
         menu.addItem(iconToggle)
+
+        // 未授权时给出明确入口:重建后辅助功能授权会失效,需要重新勾选
+        if !AXIsProcessTrusted() {
+            let grant = NSMenuItem(
+                title: "⚠️ 打开辅助功能设置(需授权后才能拦截 ⌘Q)",
+                action: #selector(openAccessibilitySettings), keyEquivalent: ""
+            )
+            grant.target = self
+            menu.addItem(grant)
+        }
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
@@ -191,8 +237,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    @objc private func toggleIconStyle() {
-        statusIconTemplate.toggle() // setter 内会重建图标与菜单
+    /// 打开系统设置的辅助功能面板
+    @objc private func openAccessibilitySettings() {
+        NSWorkspace.shared.open(
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        )
+    }
+
+    /// 三态循环:自动 → 强制单色 → 强制彩色 → 自动
+    @objc private func cycleIconStyle() {
+        switch statusIconTemplateOverride {
+        case nil:      statusIconTemplateOverride = true   // 自动 → 单色
+        case .some(true):  statusIconTemplateOverride = false // 单色 → 彩色
+        case .some(false): statusIconTemplateOverride = nil   // 彩色 → 自动
+        } // setter 内会重建图标与菜单
     }
 
     @objc private func toggleEnabled() {
