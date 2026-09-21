@@ -44,14 +44,10 @@ ZIP="$DIST/SlowQ-$VERSION-macos-universal.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 echo "📦 $ZIP"
 
-# ── DMG:内含 app + Applications 软链接,拖拽安装 ──
+# ── DMG:带自定义安装界面(品牌横幅 + 拖拽箭头 + 中英双语说明)──
+# 布局细节见 tools/make-dmg.sh 与 tools/gen-dmgbackground.swift
 DMG="$DIST/SlowQ-$VERSION-macos-universal.dmg"
-STAGE=$(mktemp -d)
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "SlowQ" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
-rm -rf "$STAGE"
-echo "💿 $DMG"
+./tools/make-dmg.sh "$APP" "$DMG" "SlowQ" "SlowQ/SlowQ.png"
 
 echo
 echo "=== 产物 ==="
