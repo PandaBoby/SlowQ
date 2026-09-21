@@ -148,11 +148,11 @@ Once granted, a snail icon appears in the menu bar. To verify it's active, check
 Interception **keeps working** while the icon is hidden — there is just no menu entry left to click. To bring it back:
 
 > ### 🐌 Simply open 慢Q again
-> Click 慢Q once more in **Launchpad / Applications / the Dock** (even though it is already running in the background) and the icon returns immediately, with a "menu bar icon restored" toast in the centre of the screen.
+> Click 慢Q once more in **Launchpad / Applications / the Dock** (even though it is already running in the background) and the icon returns immediately, with a "menu bar icon restored" toast **centred at the top of the screen**.
 
 Details:
 
-- Hiding shows a toast straight away — **"menu bar icon hidden · open 慢Q again to restore"** — so the way back is explained at the moment it matters
+- Hiding shows a toast straight away at the **top centre of the screen** — **"menu bar icon hidden · open 慢Q again to restore"** — so the way back is explained at the moment it matters
 - Re-opening does **not** start a second process; it just shows the icon again and clears the hidden setting
 - Every launch also shows the icon for the first **10 seconds**; opening the menu during that window keeps it too
 

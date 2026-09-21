@@ -982,14 +982,35 @@ final class ProgressIndicatorView: NSView {
 
 /// 短暂的屏幕提示条:用于"图标已隐藏/已恢复"这类一次性反馈。
 /// 不依赖通知权限,也不抢焦点(非激活面板)。
+///
+/// 位置固定在**屏幕顶部**(菜单栏下方)并水平居中;卡片宽度按文字自适应,
+/// 因此任何长度的提示都是居中的、不会被截断。
 final class ToastWindow: NSWindow {
     private let label = NSTextField(labelWithString: "")
 
+    /// 距菜单栏下沿的间距(点)
+    private static let topMargin: CGFloat = 10
+    /// 卡片内边距与高度
+    private static let hPad: CGFloat = 22
+    private static let height: CGFloat = 46
+
     init(text: String) {
-        let w: CGFloat = 380, h: CGFloat = 54
-        let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        let textWidth = (text as NSString)
+            .size(withAttributes: [.font: font]).width
+        // 宽度自适应内容,并夹在合理区间内
+        let w = min(max(textWidth + Self.hPad * 2, 240), 680)
+        let h = Self.height
+
+        // 顶部居中:visibleFrame 已排除菜单栏,取其 maxY 再向下留出间距
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let vf = screen?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let originX = vf.midX - w / 2
+        let originY = vf.maxY - h - Self.topMargin
+
         super.init(
-            contentRect: NSRect(x: screen.midX - w / 2, y: screen.midY - 140, width: w, height: h),
+            contentRect: NSRect(x: originX, y: originY, width: w, height: h),
             styleMask: [.borderless], backing: .buffered, defer: false
         )
         isOpaque = false
@@ -1001,16 +1022,17 @@ final class ToastWindow: NSWindow {
 
         let card = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
         card.wantsLayer = true
-        card.layer?.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 0.88).cgColor
-        card.layer?.cornerRadius = 14
+        card.layer?.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 0.90).cgColor
+        card.layer?.cornerRadius = h / 2   // 胶囊形,顶部提示更轻盈
         card.layer?.borderWidth = 1
         card.layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.14).cgColor
 
         label.stringValue = text
-        label.alignment = .center
-        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.alignment = .center          // 文字水平居中
+        label.font = font
         label.textColor = .white
-        label.frame = NSRect(x: 12, y: (h - 20) / 2, width: w - 24, height: 20)
+        label.lineBreakMode = .byTruncatingTail
+        label.frame = NSRect(x: Self.hPad, y: (h - 19) / 2, width: w - Self.hPad * 2, height: 19)
         card.addSubview(label)
         contentView = card
     }
@@ -1021,6 +1043,12 @@ extension AppDelegate {
     func showToast(_ text: String) {
         toastWindow?.orderOut(nil)
         let w = ToastWindow(text: text)
+        if let scr = NSScreen.main {
+            let f = w.frame
+            let centered = abs(f.midX - scr.visibleFrame.midX) < 0.5
+            let atTop = abs(f.maxY - (scr.visibleFrame.maxY - 10)) < 0.5
+            self.log("提示条「\(text)」frame=\(Int(f.width))x\(Int(f.height)) @(\(Int(f.minX)),\(Int(f.minY))) 居中=\(centered) 顶部=\(atTop)")
+        }
         toastWindow = w
         w.alphaValue = 0
         w.orderFrontRegardless()
