@@ -31,6 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var holding = false
     private var holdStartTime: CFTimeInterval = 0
     private var fired = false // 本轮是否已放行/执行退出
+    /// 按住进度计时器。必须可作废:跨睡眠的残留计时会把一次早已放弃的
+    /// 按住兑现成真实退出(见 handleWillSleep / resetState)。
+    private var holdTimer: Timer?
+    /// 等待 ⌘ 松开的轮询计时器。必须可作废且带超时(见 waitForCommandReleaseThenSend)。
+    private var commandReleaseTimer: Timer?
 
     private var hudWindow: OverlayWindow?
     var toastWindow: ToastWindow?
@@ -41,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if holdSeconds <= 0 { holdSeconds = 3.0 }
 
         registerTerminateObserver()
+        registerLifecycleObservers()
 
         // 无论是否已授权都先显示菜单栏图标,让用户能立即看到应用已启动、
         // 并可随时从菜单退出或打开权限设置(否则未授权时图标不出现,容易被当成没启动)。
@@ -62,12 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if trusted {
             log("辅助功能权限 OK")
             if !installEventTap() {
-                // 启动时已可信但 tap 创建失败(罕见):进入轮询重试
-                pollForPermission()
+                // 启动时已可信但 tap 创建失败(罕见):交给看门狗重试
+                log("tap 创建失败,交由看门狗重试")
             }
         } else {
-            log("未获得辅助功能权限,等待授权")
-            pollForPermission()
+            log("未获得辅助功能权限,等待授权;看门狗会持续重试")
         }
     }
 
@@ -80,27 +85,161 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            self?.uninstallEventTap()
+            guard let self else { return }
+            self.uninstallEventTap()
+            self.tapWatchdogTimer?.invalidate()
+            self.tapWatchdogTimer = nil
         }
     }
 
-    /// 授权成功前每秒轮询,一旦授权立即安装 tap 并显示菜单
-    private func pollForPermission() {
-        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
-            guard let self else { t.invalidate(); return }
-            if AXIsProcessTrusted() {
-                self.setupStatusItem()
-                // quiet: 重试路径不弹模态窗(否则每秒一次弹窗风暴)
-                if self.installEventTap(quiet: true) {
-                    t.invalidate()
-                    self.log("权限已授予,事件拦截已安装")
-                } else {
-                    // 权限状态与 tap 创建存在延迟窗口,保留轮询下秒重试
-                    self.log("权限已授予但 tap 创建失败,继续重试")
-                }
+    // MARK: 睡眠 / 唤醒 / 会话恢复
+    //
+    // 这一段解决的是「合盖睡眠再唤醒后 ⌘Q 不再被拦截,但进程仍在运行、
+    // 菜单栏图标也还在」这一故障。原因链:
+    //   ① 睡眠会让 session 级 event tap 的底层 Mach port 被系统作废;
+    //   ② 端口作废后回调永不再被调用 —— 写在 handleEvent 里的
+    //      .tapDisabledByTimeout / .tapDisabledByUserInput 自愈分支
+    //      也就永远不会执行(它挂在已经死掉的东西上);
+    //   ③ installEventTap 原本只判 `eventTap != nil` 就早退,
+    //      把陈旧端口当成"已装好",任何恢复路径都会被它挡掉;
+    //   ④ 此前全应用只注册了 willTerminate 一个观察者,
+    //      唤醒之后根本没有重建时机。
+    // 因此必须补齐:外部可触发的体检 + 端口有效性校验 + 全量重建 + 看门狗兜底。
+
+    private var lifecycleObserversRegistered = false
+
+    /// 注册睡眠/唤醒/会话/显示器变化观察者(幂等)
+    private func registerLifecycleObservers() {
+        guard !lifecycleObserversRegistered else { return }
+        lifecycleObserversRegistered = true
+
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+
+        // 即将睡眠:立刻把按住状态归零。
+        // CACurrentMediaTime() 在睡眠期间不推进,若不清理,唤醒后 0.05s
+        // 计时器会接着上次的进度继续算,把用户几小时前放弃的那次"按住"
+        // 兑现成一次真实退出 —— 向唤醒后最前面的 App 投递合成 ⌘Q。
+        workspaceCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.handleWillSleep()
+        }
+
+        // 唤醒(整机 / 显示器):校验并按需重建 tap
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
+            workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.recoverAfterWake(reason: name.rawValue)
             }
         }
+
+        // 解锁 / 切换回本用户会话:session tap 常在此期间被系统禁用
+        workspaceCenter.addObserver(
+            forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.ensureEventTapHealthy(reason: "sessionDidBecomeActive")
+        }
+
+        // 应用重新激活:accessory 应用被点击或打开菜单时也会走到,作为额外兜底
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.ensureEventTapHealthy(reason: "didBecomeActive")
+        }
+
+        // 显示器配置变化(含唤醒后重建显示器):tap 需复查,动画 link 需重连
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.ensureEventTapHealthy(reason: "screenParametersChanged")
+            self.hudWindow?.progress.refreshAnimationIfVisible()
+        }
+
+        startTapWatchdog()
     }
+
+    private func handleWillSleep() {
+        log("系统即将睡眠,重置按住状态")
+        resetState()
+    }
+
+    /// 唤醒后:先归零状态机,再校验拦截是否还活着
+    private func recoverAfterWake(reason: String) {
+        log("系统已唤醒(\(reason)),校验事件拦截")
+        resetState()
+        ensureEventTapHealthy(reason: reason)
+    }
+
+    // MARK: 事件 tap 体检 / 看门狗
+
+    private var tapWatchdogTimer: Timer?
+    /// 进入暂停的时刻,用于给合成退出的暂停窗口加硬超时(见 watchdogTick)
+    private var pausedAt: Date?
+
+    /// tap 是否真的可用。
+    /// `eventTap != nil` 完全不足以判活:睡眠/唤醒后系统作废的是底层 Mach port,
+    /// Swift 侧的 CFMachPort 引用依旧非 nil,不会变 nil 也不会报错。
+    private var isEventTapHealthy: Bool {
+        guard let tap = eventTap, CFMachPortIsValid(tap) else { return false }
+        return CGEvent.tapIsEnabled(tap: tap)
+    }
+
+    /// 外部定期体检。回调内自愈在 tap 已死时永远不会触发,所以必须有人在"外面"看。
+    private func startTapWatchdog() {
+        tapWatchdogTimer?.invalidate()
+        tapWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.watchdogTick()
+        }
+    }
+
+    private func watchdogTick() {
+        // 暂停窗口正常只有 ~0.3s;超时未复位说明恢复路径丢了(例如 ⌘ 的 keyUp
+        // 被睡眠转换吞掉)。此时 tap 处于物理禁用状态且无人再管,必须强制复位。
+        if eventTapIsPaused, let since = pausedAt, Date().timeIntervalSince(since) > 3 {
+            log("合成退出暂停状态超时,强制复位")
+            eventTapIsPaused = false
+            resetState()
+        }
+        ensureEventTapHealthy(reason: "watchdog")
+    }
+
+    /// 所有恢复路径(唤醒 / 会话激活 / 显示器变化 / 看门狗)的唯一入口:体检 + 按需修复。
+    private func ensureEventTapHealthy(reason: String) {
+        // 暂停窗口(合成 ⌘Q 前后)内不干预,否则会破坏"暂停期间不放行"的契约
+        guard !eventTapIsPaused else { return }
+        // 授权被回收时无法重建(重装/升级后常见);恢复授权后看门狗会再走到这里
+        guard AXIsProcessTrusted() else { return }
+
+        if let tap = eventTap, CFMachPortIsValid(tap) {
+            // 端口仍然有效:只是被系统禁用(Secure Input、超时等),重新启用即可
+            if !CGEvent.tapIsEnabled(tap: tap) {
+                CGEvent.tapEnable(tap: tap, enable: true)
+                log("事件拦截曾被系统禁用,已重新启用(\(reason))")
+            }
+            return
+        }
+
+        // 端口已作废(睡眠/唤醒、显示器重配置),或此前从未装上(未授权):
+        // 只能整体重建
+        let hadTap = eventTap != nil
+        if hadTap {
+            log("事件拦截端口已失效,重建(\(reason))")
+            uninstallEventTap()
+        }
+        resetState()
+        if installEventTap(quiet: true) {
+            log("事件拦截已重建(\(reason))")
+            // 从"未授权/无 tap"变为可用:刷新菜单,去掉辅助功能授权提示项
+            if !hadTap { setupStatusItem() }
+        } else {
+            log("事件拦截重建失败(\(reason)),等待下次体检重试")
+        }
+    }
+
+    // 注:原先 1Hz 的「权限轮询」计时器已移除 —— 它既不持有也不失效,
+    // 用户始终不授权时会永久跑满进程生命周期,且会反复重建菜单栏图标。
+    // 授权检测与 tap 重建统一交给 5 秒一次的看门狗(ensureEventTapHealthy):
+    // 它在授权恢复后会自行安装 tap,并调用 setupStatusItem() 刷新菜单。
 
     // MARK: Status item
 
@@ -341,11 +480,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 这是「隐藏图标」唯一的、可发现的自救入口 —— 之前只靠"重启后 10 秒窗口",
     /// 但应用一直在后台运行,重新打开并不会重启进程,那个窗口根本不会触发。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if statusItemHidden || statusItem.isVisible == false {
+        // statusItem 是隐式解包可选(NSStatusItem!):此处若早于 setupStatusItem()
+        // 被调用,直接解引用会崩溃,因此先判空并补建。
+        guard let item = statusItem else {
+            setupStatusItem()
+            log("重新打开应用:菜单栏图标已补建")
+            return false
+        }
+        if statusItemHidden || item.isVisible == false {
             statusItemHidden = false
             autoHideTimer?.invalidate()
             autoHideTimer = nil
-            statusItem.isVisible = true
+            item.isVisible = true
             rebuildMenu()
             log("重新打开应用:菜单栏图标已恢复")
             showToast("菜单栏图标已恢复")
@@ -471,8 +617,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// - Parameter quiet: true 时失败不弹权限提示窗(用于轮询重试路径,避免每秒弹窗)
     private func installEventTap(quiet: Bool = false) -> Bool {
-        // 已装上则不重复
-        if eventTap != nil { return true }
+        // 幂等:仅在现有 tap 仍然健康时早退。
+        // 不能只判 `eventTap != nil` —— 睡眠/唤醒后系统作废的是底层 Mach port,
+        // CFMachPort 引用仍非 nil,只判非空会让所有恢复路径永远早退。
+        if isEventTapHealthy { return true }
+        if eventTap != nil { uninstallEventTap() }
 
         let mask = (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
@@ -545,11 +694,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByUserInput || type == .tapDisabledByTimeout {
-            if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-            return Unmanaged.passRetained(event)
+            // 暂停窗口内不干预(否则会提前重开 tap、破坏暂停契约);
+            // 端口已失效时 tapEnable 本身也无效,交给看门狗重建。
+            if !eventTapIsPaused, let tap = eventTap, CFMachPortIsValid(tap) {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+            return Unmanaged.passUnretained(event)
         }
 
-        guard enabled else { return Unmanaged.passRetained(event) }
+        guard enabled else { return Unmanaged.passUnretained(event) }
 
         let flags = event.flags
         let cmd = flags.contains(.maskCommand)
@@ -565,7 +718,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if holding && !cmd {
                 cancelHold()
             }
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
 
         case .keyDown:
             if isQEvent && cmd {
@@ -578,7 +731,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 beginHold()
                 return nil
             }
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
 
         case .keyUp:
             if isQEvent && cmd {
@@ -588,10 +741,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     return nil // 松开时不放行 keyUp(避免应用收到孤立的 keyUp)
                 }
             }
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
 
         default:
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
     }
 
@@ -604,7 +757,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func log(_ s: String) {
         guard debugLogEnabled else { return }
-        let line = "\(Date().timeIntervalSince1970)) \(s)\n"
+        let line = "\(Date().timeIntervalSince1970) \(s)\n"
         let data = line.data(using: .utf8)!
         DispatchQueue.global(qos: .utility).async { [weak self] in
             self?.flushLog(data)
@@ -640,14 +793,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fired = false
         holdStartTime = CACurrentMediaTime()
         showHUD()
-        // 定时检查是否达到时长
-        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] t in
+        // 定时检查是否达到时长。存为属性,以便睡眠/复位时能立即作废 ——
+        // 否则跨睡眠的残留计时会把一次早已放弃的按住兑现成真实退出。
+        holdTimer?.invalidate()
+        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] t in
             guard let self else { t.invalidate(); return }
             guard self.holding else { t.invalidate(); return }
             let elapsed = CACurrentMediaTime() - self.holdStartTime
             self.updateHUD(elapsed: elapsed)
             if elapsed >= self.holdSeconds {
                 t.invalidate()
+                self.holdTimer = nil
                 self.fireQuit()
             }
         }
@@ -673,6 +829,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var eventTapIsPaused = false {
         didSet {
             guard eventTapIsPaused != oldValue else { return }
+            // 记录进入暂停的时刻,供看门狗对暂停窗口加硬超时
+            pausedAt = eventTapIsPaused ? Date() : nil
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: !eventTapIsPaused)
             }
@@ -683,12 +841,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pausedForSyntheticQuit: Bool { eventTapIsPaused }
 
     private func waitForCommandReleaseThenSend() {
-        // 轮询等 ⌘ 松开,然后发送合成 ⌘Q
-        Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] t in
+        // 轮询等 ⌘ 松开,然后发送合成 ⌘Q。
+        // 必须带硬超时:若 ⌘ 的 keyUp 被睡眠转换吞掉、或唤醒后键态被 latch,
+        // 没有超时的轮询会让 eventTapIsPaused 永久为 true —— tap 从此物理禁用、
+        // ⌘Q 不再被拦截,而且没有任何恢复路径(与本次故障同症状)。
+        commandReleaseTimer?.invalidate()
+        let deadline = Date().addingTimeInterval(1.5)
+        commandReleaseTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] t in
             guard let self else { t.invalidate(); return }
             let down = CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(kVK_Command))
             if !down {
                 t.invalidate()
+                self.commandReleaseTimer = nil
+                self.sendQuitToActiveApp()
+            } else if Date() >= deadline {
+                t.invalidate()
+                self.commandReleaseTimer = nil
+                self.log("等待 ⌘ 松开超时,强制放行合成 ⌘Q")
                 self.sendQuitToActiveApp()
             }
         }
@@ -728,6 +897,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func resetState() {
         holding = false
         fired = false
+        holdTimer?.invalidate()
+        holdTimer = nil
         hideHUD()
     }
 }
@@ -785,7 +956,10 @@ final class ProgressIndicatorView: NSView {
         else { return nil }
         let config = NSImage.SymbolConfiguration(pointSize: 20, weight: .medium)
         guard let sized = base.withSymbolConfiguration(config) else { return nil }
-        let tinted = sized.copy() as! NSImage
+        // 防御性转换而非 `as!`:此处失败会直接崩溃,而这条图标着色路径
+        // 历史上就出过一次强制解包崩溃(Swift runtime failure: unexpectedly
+        // found nil)。失败时优雅降级为不画图标,而不是让 App 挂掉。
+        guard let tinted = sized.copy() as? NSImage else { return nil }
         tinted.lockFocus()
         NSColor.white.withAlphaComponent(0.85).set()
         NSRect(origin: .zero, size: sized.size).fill(using: .sourceAtop)
@@ -826,6 +1000,20 @@ final class ProgressIndicatorView: NSView {
         if let link = displayLink {
             CVDisplayLinkStop(link)
         }
+        // 必须置空:link 是按创建时的显示器配置建立的,睡眠/显示器重配置后
+        // 可能不再回调。留着重启只会复用一个已死的 link,进度环永久冻结。
+        if let opaque = displayLinkBox {
+            Unmanaged<WeakBox>.fromOpaque(opaque).release()
+            displayLinkBox = nil
+        }
+        displayLink = nil
+    }
+
+    /// 显示器配置变化(含唤醒)后重连动画,避免进度环冻结在旧 link 上
+    func refreshAnimationIfVisible() {
+        guard window?.isVisible == true else { return }
+        stopAnimation()
+        startAnimation()
     }
 
     @objc private func tick() {
