@@ -92,11 +92,13 @@ Alternatively **right-click** `SlowQ.app` in Finder → **Open** → **Open** ag
 ```bash
 git clone https://github.com/PandaBoby/SlowQ.git
 cd SlowQ
-./build-app.sh          # builds a universal binary and packages SlowQ/SlowQ.app
-open SlowQ/SlowQ.app
+./build-app.sh          # builds a universal binary into SlowQ/.build-app/SlowQ.app
+open SlowQ/.build-app/SlowQ.app
 ```
 
 Requires Xcode Command Line Tools (`xcode-select --install`). `build-app.sh` handles everything: generating the menu bar icon → compiling (arm64 + x86_64) → packaging the `.app` → producing the `.icns` → ad-hoc signing.
+
+> The dev build lands in the hidden `.build-app/` directory. Spotlight skips dot-directories, so it **never shows up in Launchpad or Finder search** and can't be confused with the `/Applications` copy.
 
 For release artifacts use `./release.sh` (writes zip/dmg into `dist/`); add `--publish` to create the GitHub Release directly.
 
@@ -106,7 +108,7 @@ macOS requires apps that intercept global keyboard events to hold the **Accessib
 
 1. Launch `SlowQ.app`
 2. Open **System Settings → Privacy & Security → Accessibility**
-3. Find **SlowQ** and tick it (if it's not listed, add `SlowQ/SlowQ.app` with the `+` button)
+3. Find **SlowQ** and tick it (if it's not listed, add `/Applications/SlowQ.app` — or the dev build `SlowQ/.build-app/SlowQ.app` — with the `+` button)
 4. SlowQ detects the grant automatically and starts working — no restart needed
 
 Once granted, a snail icon appears in the menu bar. To verify it's active, check that `~/Library/Logs/SlowQ.log` contains `event tap 安装成功` (enable logging first — see below).

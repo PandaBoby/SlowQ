@@ -15,7 +15,7 @@ DIST="dist"
 echo "=== 构建 SlowQ $TAG ==="
 SLOWQ_VERSION="$VERSION" ./build-app.sh
 
-APP="SlowQ/SlowQ.app"
+APP="SlowQ/.build-app/SlowQ.app"
 [ -d "$APP" ] || { echo "❌ 未找到 $APP"; exit 1; }
 
 mkdir -p "$DIST"

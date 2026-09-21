@@ -92,11 +92,13 @@ xattr -dr com.apple.quarantine /Applications/SlowQ.app
 ```bash
 git clone https://github.com/PandaBoby/SlowQ.git
 cd SlowQ
-./build-app.sh          # 构建通用二进制并打包为 SlowQ/SlowQ.app
-open SlowQ/SlowQ.app
+./build-app.sh          # 构建通用二进制并打包为 SlowQ/.build-app/SlowQ.app
+open SlowQ/.build-app/SlowQ.app
 ```
 
 需要 Xcode Command Line Tools(`xcode-select --install`)。`build-app.sh` 会自动完成:生成菜单栏图标 → 编译(arm64 + x86_64)→ 打包 `.app` → 生成 `.icns` → adhoc 签名。
+
+> 开发构建产物放在隐藏目录 `.build-app/` 下,Spotlight 不索引点号目录,因此它**不会出现在 Launchpad 或 Finder 搜索里**,不会和 `/Applications` 里的正式版重复。
 
 发布打包用 `./release.sh`(产出 zip/dmg 到 `dist/`),加 `--publish` 可直接创建 GitHub Release。
 
@@ -106,7 +108,7 @@ macOS 要求拦截全局键盘事件的应用获得**辅助功能**权限,否则
 
 1. 启动 `SlowQ.app`
 2. 打开 **系统设置 → 隐私与安全性 → 辅助功能**
-3. 找到 **SlowQ** 并勾选(若列表中没有,点 `+` 手动添加 `SlowQ/SlowQ.app`)
+3. 找到 **SlowQ** 并勾选(若列表中没有,点 `+` 手动添加,选 `/Applications/SlowQ.app` 或开发构建 `SlowQ/.build-app/SlowQ.app`)
 4. SlowQ 会**自动检测**到授权并立即生效,无需重启
 
 授权成功后菜单栏出现蜗牛图标。验证是否生效:看 `~/Library/Logs/SlowQ.log` 是否出现 `event tap 安装成功`(需先开启日志,见下)。

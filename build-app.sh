@@ -38,7 +38,9 @@ fi
 
 [ -f "$BUILD_BIN" ] || { echo "❌ 未找到编译产物: $BUILD_BIN"; exit 1; }
 
-APP="SlowQ.app"
+# 产物放在隐藏目录 .build-app/ 下:Spotlight 不索引点号目录,
+# 因此开发构建不会出现在 Finder 搜索 / Launchpad 里,避免与 /Applications 的正式版重复。
+APP=".build-app/SlowQ.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BUILD_BIN" "$APP/Contents/MacOS/SlowQ"

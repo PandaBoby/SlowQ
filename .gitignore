@@ -1,4 +1,4 @@
 .DS_Store
 SlowQ/.build/
-SlowQ/SlowQ.app/
+.build-app/
 dist/
