@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///
     /// 1x 文件的像素尺寸就是逻辑点数,据此设置 size,避免被拉伸变形;
     /// 2x 作为 Retina 表示图由 AppKit 自动选用。缺失时回退系统 ⏳ 符号。
+    /// 是否走模板模式由菜单中的开关控制(彩色 / 单色)。
     private func loadStatusIcon() -> NSImage? {
         guard let dir = statusIconDirectory(),
               let data1x = try? Data(contentsOf: dir.appendingPathComponent("statusbar.png")),
@@ -116,9 +117,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             image.addRepresentation(rep2x)
         }
 
-        // 模板模式:菜单栏自动适配深浅色
-        image.isTemplate = true
+        // 模板模式:菜单栏自动适配深浅色(丢失颜色,只保留轮廓)
+        // 彩色模式:保留图标原色
+        image.isTemplate = statusIconTemplate
         return image
+    }
+
+    /// 菜单栏图标是否使用模板(单色)模式,持久化到 UserDefaults
+    private var statusIconTemplate: Bool {
+        get { UserDefaults.standard.bool(forKey: "statusIconTemplate") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "statusIconTemplate")
+            setupStatusItem() // 立即应用
+        }
     }
 
     private func setupStatusItem() {
@@ -129,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             if let icon = loadStatusIcon() {
                 button.image = icon // 尺寸由资源自身决定,不强制缩放
+                log("状态栏图标: \(Int(icon.size.width))x\(Int(icon.size.height))pt, 按钮=\(button.frame.size), thickness=\(NSStatusBar.system.thickness)")
             } else {
                 button.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "SlowQ")
             }
@@ -161,6 +173,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(.separator())
 
+        let iconToggle = NSMenuItem(
+            title: "菜单栏图标:\(statusIconTemplate ? "单色" : "彩色")",
+            action: #selector(toggleIconStyle), keyEquivalent: ""
+        )
+        iconToggle.target = self
+        menu.addItem(iconToggle)
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(
             title: "退出 SlowQ (⌥⌘Q)", action: #selector(quitSelf), keyEquivalent: "q"
         )
@@ -169,6 +189,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
 
         statusItem.menu = menu
+    }
+
+    @objc private func toggleIconStyle() {
+        statusIconTemplate.toggle() // setter 内会重建图标与菜单
     }
 
     @objc private func toggleEnabled() {

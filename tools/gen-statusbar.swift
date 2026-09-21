@@ -1,11 +1,11 @@
 // gen-statusbar.swift — 从源图标生成菜单栏图标
 //
-// 用法: swift tools/gen-statusbar.swift <源图.png> <输出目录>
+// 用法: swift tools/gen-statusbar.swift <源图.png> <输出目录> [内容高度pt]
 //
 // 处理流程:
 //   1. 扫描 alpha 通道求"内容包围盒",裁掉透明边距
 //      (这是菜单栏图标显得比别的图标小的根因:整张画布缩放时,透明边距也占尺寸)
-//   2. 按内容高度 = TARGET_HEIGHT_PT 等比缩放到 1x / 2x
+//   2. 按内容高度 = 目标高度pt 等比缩放到 1x / 2x
 //   3. 输出 statusbar.png(1x) 与 statusbar@2x.png(2x)
 //      1x 文件的像素尺寸 == 逻辑点数,App 侧据此设置 image.size,避免拉伸变形
 //
@@ -17,17 +17,15 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 
-// 菜单栏图标视觉高度(点)。macOS 状态栏图标常见 16–18pt,
-// 取 17pt 让内容与其他 App 图标等高。
-let TARGET_HEIGHT_PT: CGFloat = 17
-
 let args = CommandLine.arguments
 guard args.count >= 3 else {
-    print("用法: swift tools/gen-statusbar.swift <源图.png> <输出目录>")
+    print("用法: swift tools/gen-statusbar.swift <源图.png> <输出目录> [内容高度pt]")
     exit(1)
 }
 let srcPath = args[1]
 let outDir = args[2]
+// 菜单栏图标视觉高度(点)。macOS 状态栏图标常见 14–18pt,默认 15pt
+let TARGET_HEIGHT_PT: CGFloat = args.count >= 4 ? (Double(args[3]).map { CGFloat($0) } ?? 15) : 15
 
 guard let srcImage = NSImage(contentsOfFile: srcPath),
       let srcTIFF = srcImage.tiffRepresentation,
@@ -41,10 +39,12 @@ let srcW = srcCG.width
 let srcH = srcCG.height
 
 // ── 1. 求内容包围盒(alpha > 阈值,colorAt 以左上为原点) ──
+// 阈值 0.15:忽略抗锯齿产生的近乎透明的边缘像素,取到真实可见轮廓
+let ALPHA_THRESHOLD: CGFloat = 0.15
 var minX = srcW, minY = srcH, maxX = -1, maxY = -1
 for x in 0..<srcW {
     for y in 0..<srcH {
-        guard let c = srcRep.colorAt(x: x, y: y), c.alphaComponent > 0.05 else { continue }
+        guard let c = srcRep.colorAt(x: x, y: y), c.alphaComponent > ALPHA_THRESHOLD else { continue }
         if x < minX { minX = x }
         if x > maxX { maxX = x }
         if y < minY { minY = y }

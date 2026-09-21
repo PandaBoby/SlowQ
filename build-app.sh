@@ -5,7 +5,7 @@ cd "$(dirname "$0")/SlowQ"
 
 # ── 菜单栏图标:从源图标生成(裁透明边距 + 等比缩放到 17pt 高)──
 # 必须在 swift build 之前,资源清单才会打到 .bundle 里
-ICON_SRC="${SLOWQ_ICON:-$PWD/icon_蜗牛.png}"
+ICON_SRC="${SLOWQ_ICON:-$PWD/SlowQ.png}"
 if [ -f "$ICON_SRC" ]; then
     echo "🐌 生成菜单栏图标…"
     swift ../tools/gen-statusbar.swift "$ICON_SRC" "$PWD/src/Resources"
