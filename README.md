@@ -66,16 +66,39 @@ SlowQ 把 `⌘Q` 变成"需要按住"的操作:按下时屏幕中央浮出倒计
 
 ## 安装
 
-目前通过源码构建(尚未提供预编译包):
+### 方式一:下载预编译包(推荐)
+
+从 [**Releases**](https://github.com/PandaBoby/SlowQ/releases/latest) 下载:
+
+| 文件 | 说明 |
+|---|---|
+| `SlowQ-x.y.z-macos-universal.dmg` | 推荐。打开后把 SlowQ 拖进 Applications |
+| `SlowQ-x.y.z-macos-universal.zip` | 解压后把 `SlowQ.app` 拖进 Applications |
+
+> **通用二进制**,同时支持 Apple Silicon 与 Intel Mac。
+
+**首次打开必读 ⚠️** —— 本应用未做 Apple 开发者签名与公证(需 99 美元/年的账号),macOS 会拦截首次启动。执行一次即可:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/SlowQ.app
+```
+
+或者在 Finder 里**右键**点 `SlowQ.app` → **打开** → 在弹窗里再点 **打开**。
+
+> 若提示「已损坏,无法打开」,说明右键方式不适用,请用上面的 `xattr` 命令。
+
+### 方式二:从源码构建
 
 ```bash
 git clone https://github.com/PandaBoby/SlowQ.git
 cd SlowQ
-./build-app.sh          # 构建并打包为 SlowQ/SlowQ.app
+./build-app.sh          # 构建通用二进制并打包为 SlowQ/SlowQ.app
 open SlowQ/SlowQ.app
 ```
 
-`build-app.sh` 会自动完成:生成菜单栏图标 → 编译 release → 打包 `.app` → 生成 `.icns` → adhoc 签名。
+需要 Xcode Command Line Tools(`xcode-select --install`)。`build-app.sh` 会自动完成:生成菜单栏图标 → 编译(arm64 + x86_64)→ 打包 `.app` → 生成 `.icns` → adhoc 签名。
+
+发布打包用 `./release.sh`(产出 zip/dmg 到 `dist/`),加 `--publish` 可直接创建 GitHub Release。
 
 ## ⚠️ 首次运行必须授权
 

@@ -66,16 +66,39 @@ When you press `⌘Q`, this overlay appears in the center of the screen (the rin
 
 ## Install
 
-Build from source (no prebuilt binaries yet):
+### Option 1 — Download a prebuilt package (recommended)
+
+Grab it from [**Releases**](https://github.com/PandaBoby/SlowQ/releases/latest):
+
+| File | Notes |
+|---|---|
+| `SlowQ-x.y.z-macos-universal.dmg` | Recommended. Open it and drag SlowQ into Applications |
+| `SlowQ-x.y.z-macos-universal.zip` | Unzip and drag `SlowQ.app` into Applications |
+
+> **Universal binary** — runs on both Apple Silicon and Intel Macs.
+
+**⚠️ First launch** — the app is not Developer ID signed or notarized (that needs a $99/yr Apple account), so macOS blocks the first run. Clear the quarantine flag once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/SlowQ.app
+```
+
+Alternatively **right-click** `SlowQ.app` in Finder → **Open** → **Open** again in the dialog.
+
+> If macOS says the app "is damaged", the right-click route won't work — use the `xattr` command above.
+
+### Option 2 — Build from source
 
 ```bash
 git clone https://github.com/PandaBoby/SlowQ.git
 cd SlowQ
-./build-app.sh          # builds and packages SlowQ/SlowQ.app
+./build-app.sh          # builds a universal binary and packages SlowQ/SlowQ.app
 open SlowQ/SlowQ.app
 ```
 
-`build-app.sh` handles everything: generating the menu bar icon → compiling release → packaging the `.app` → producing the `.icns` → ad-hoc signing.
+Requires Xcode Command Line Tools (`xcode-select --install`). `build-app.sh` handles everything: generating the menu bar icon → compiling (arm64 + x86_64) → packaging the `.app` → producing the `.icns` → ad-hoc signing.
+
+For release artifacts use `./release.sh` (writes zip/dmg into `dist/`); add `--publish` to create the GitHub Release directly.
 
 ## ⚠️ Accessibility permission is required
 
