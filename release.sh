@@ -88,6 +88,18 @@ if [ "$PUBLISH_GITEE" = "1" ]; then
 
     API="https://gitee.com/api/v5/repos/$GITEE_REPO"
 
+    # 确保 tag 已存在于 Gitee —— Release 依赖 tag,缺失时 API 会失败
+    if git remote get-url gitee >/dev/null 2>&1; then
+        if ! git ls-remote --tags gitee "refs/tags/$TAG" 2>/dev/null | grep -q "refs/tags/$TAG"; then
+            git tag -f "$TAG" HEAD >/dev/null 2>&1 || true
+            echo "→ 推送 tag $TAG 到 Gitee"
+            git push gitee "$TAG" >/dev/null 2>&1 && echo "  ✓ tag 已推送" \
+                || echo "  ⚠️  tag 推送失败,请确认 gitee remote 与凭据"
+        fi
+    else
+        echo "⚠️  未配置 gitee remote,跳过 tag 推送(若 tag 不存在,Release 可能创建失败)"
+    fi
+
     # 查询同名 tag 是否已有 Release,有则复用其 id(避免重复创建报错)
     RID=$(curl -s "$API/releases?access_token=$TOKEN" | python3 -c "
 import json,sys
