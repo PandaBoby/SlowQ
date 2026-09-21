@@ -58,8 +58,12 @@ fi
 ICONSET_TMP="$APP/Contents/Resources/AppIcon.iconset"
 if [ -f "$ICON_SRC" ]; then
     IT=$(mktemp -d)
+    # 先生成"保持宽高比的正方形底图":源图多为横版(如 384x256),
+    # 直接 sips -z N N 会把图形压成正方形造成拉伸变形。
+    # SLOWQ_APPICON_FRACTION 控制图形最长边占画布比例(默认 0.86)。
+    swift ../tools/gen-appicon.swift "$ICON_SRC" "$IT/appicon-1024.png" "${SLOWQ_APPICON_FRACTION:-0.86}"
     for s in 16 32 64 128 256 512 1024; do
-        sips -z $s $s "$ICON_SRC" --out "$IT/$s.png" -s format png >/dev/null
+        sips -z $s $s "$IT/appicon-1024.png" --out "$IT/$s.png" -s format png >/dev/null
     done
     mkdir -p "$ICONSET_TMP"
     cp "$IT/16.png"   "$ICONSET_TMP/icon_16x16.png"

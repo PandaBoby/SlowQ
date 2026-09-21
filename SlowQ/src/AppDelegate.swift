@@ -144,28 +144,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return maxSpread < 0.12 // 阈值:明显有色才算彩色
     }
 
-    /// 模板模式覆盖值:nil = 自动识别,true = 强制单色,false = 强制彩色
+    /// 模板模式:默认**自动识别**(单色图标→模板模式,深色菜单栏自动变白;彩色图标→保留原色)。
+    /// 隐藏的手动覆盖(菜单里不暴露,仅在需要时用终端调整):
+    ///   defaults write com.slowq.app statusIconTemplate -bool true   # 强制单色
+    ///   defaults write com.slowq.app statusIconTemplate -bool false  # 强制彩色
+    ///   defaults delete com.slowq.app statusIconTemplate             # 回到自动(默认)
     private var statusIconTemplateOverride: Bool? {
-        get { UserDefaults.standard.object(forKey: "statusIconTemplate") as? Bool }
-        set {
-            if let v = newValue {
-                UserDefaults.standard.set(v, forKey: "statusIconTemplate")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "statusIconTemplate")
-            }
-            setupStatusItem() // 立即应用
-        }
+        UserDefaults.standard.object(forKey: "statusIconTemplate") as? Bool
     }
 
-    /// 菜单中显示的当前生效模式
+    /// 供日志显示当前生效模式
     private func statusIconModeLabel() -> String {
         if let forced = statusIconTemplateOverride {
             return forced ? "单色(手动)" : "彩色(手动)"
         }
-        guard let dir = statusIconDirectory(),
-              let data = try? Data(contentsOf: dir.appendingPathComponent("statusbar.png")),
-              let rep = NSBitmapImageRep(data: data) else { return "自动" }
-        return isMonochrome(rep) ? "自动 · 单色" : "自动 · 彩色"
+        return "自动"
     }
 
     private func setupStatusItem() {
@@ -198,9 +191,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let title = NSMenuItem(title: "按住时长", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
-        for s in [1.0, 2.0, 3.0, 5.0] {
+        for s in [0.5, 1.0, 2.0, 3.0, 5.0] {
+            // 0.5 这类小数要保留一位,整数不带小数点
+            let label = s == s.rounded() ? "\(Int(s))" : String(format: "%.1f", s)
             let item = NSMenuItem(
-                title: "\(Int(s)) 秒\(abs(holdSeconds - s) < 0.01 ? " ✓" : "")",
+                title: "\(label) 秒\(abs(holdSeconds - s) < 0.01 ? " ✓" : "")",
                 action: #selector(setHoldSeconds(_:)), keyEquivalent: ""
             )
             item.target = self
@@ -208,13 +203,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-
-        let iconToggle = NSMenuItem(
-            title: "菜单栏图标:\(statusIconModeLabel())",
-            action: #selector(cycleIconStyle), keyEquivalent: ""
-        )
-        iconToggle.target = self
-        menu.addItem(iconToggle)
 
         // 未授权时给出明确入口:重建后辅助功能授权会失效,需要重新勾选
         if !AXIsProcessTrusted() {
@@ -224,8 +212,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             grant.target = self
             menu.addItem(grant)
+            menu.addItem(.separator())
         }
-        menu.addItem(.separator())
 
         let quit = NSMenuItem(
             title: "退出 SlowQ (⌥⌘Q)", action: #selector(quitSelf), keyEquivalent: "q"
@@ -242,15 +230,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(
             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         )
-    }
-
-    /// 三态循环:自动 → 强制单色 → 强制彩色 → 自动
-    @objc private func cycleIconStyle() {
-        switch statusIconTemplateOverride {
-        case nil:      statusIconTemplateOverride = true   // 自动 → 单色
-        case .some(true):  statusIconTemplateOverride = false // 单色 → 彩色
-        case .some(false): statusIconTemplateOverride = nil   // 彩色 → 自动
-        } // setter 内会重建图标与菜单
     }
 
     @objc private func toggleEnabled() {

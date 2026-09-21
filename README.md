@@ -131,8 +131,7 @@ macOS 要求拦截全局键盘事件的应用获得**辅助功能**权限,否则
 | 菜单项 | 作用 |
 |---|---|
 | 停用 / 启用拦截 ⌘Q | 临时关闭拦截(如需要连续退出多个应用) |
-| 按住时长 → 1/2/3/5 秒 | 调整长按时长,自动记忆 |
-| 菜单栏图标:自动 / 单色 / 彩色 | 点击循环切换。**自动**(默认)会识别图标是否为单色:单色图标自动用模板模式(深色菜单栏渲染为白色、浅色渲染为黑色),有彩色才用彩色模式 |
+| 按住时长 → 0.5/1/2/3/5 秒 | 调整长按时长,自动记忆 |
 | 退出 SlowQ (⌥⌘Q) | 退出 SlowQ 自身(用 `⌥⌘Q` 避免被自己拦截) |
 
 ## 工作原理
@@ -172,7 +171,7 @@ macOS 要求拦截全局键盘事件的应用获得**辅助功能**权限,否则
 
 ```bash
 defaults write com.slowq.app holdSeconds -float 3      # 长按时长(秒)
-defaults write com.slowq.app statusIconTemplate -bool true   # 菜单栏图标:单色模板
+defaults write com.slowq.app statusIconTemplate -bool true   # 强制菜单栏图标为单色(默认:自动识别)
 defaults write com.slowq.app debugLog -bool true       # 调试日志(默认关闭)
 
 # 查看日志
@@ -185,7 +184,8 @@ tail -f ~/Library/Logs/SlowQ.log
 SlowQ/
 ├── build-app.sh                  # 一键构建:图标 → 编译 → 打包 → 签名
 ├── tools/
-│   └── gen-statusbar.swift       # 菜单栏图标生成器(裁透明边距 + 等比缩放)
+│   ├── gen-statusbar.swift       # 菜单栏图标生成器(裁透明边距 + 等比缩放)
+│   └── gen-appicon.swift         # App 图标生成器(保持宽高比,避免拉伸)
 ├── SlowQ/
 │   ├── Package.swift             # SwiftPM 清单
 │   ├── SlowQ.png / .svg          # 图标源(替换后重新构建即可换图标)
@@ -211,9 +211,13 @@ SlowQ/
 
 **菜单栏图标在深色菜单栏下看不清**
 
-SlowQ 默认是**自动**模式:若图标本身是单色(如纯黑剪影),会自动使用模板模式,由系统按菜单栏明暗渲染(深色→白色、浅色→黑色),不会出现黑图标配黑背景。
+SlowQ 使用**自动**模式:若图标本身是单色(如纯黑剪影),会自动作为模板图使用,由系统按菜单栏明暗渲染(深色→白色、浅色→黑色),不会出现黑图标配黑背景;有真实彩色的图标则保留原色。
 
-若你手动切到过「彩色」而图标恰好是纯黑的,图标在深色菜单栏下会隐形 —— 点菜单里的 `菜单栏图标:彩色(手动)` 循环回「自动」即可。
+只有当你在终端手动设过 `defaults write com.slowq.app statusIconTemplate -bool false`(强制彩色)且图标恰好是纯黑时才可能隐形,恢复自动:
+
+```bash
+defaults delete com.slowq.app statusIconTemplate
+```
 
 **想换图标**
 

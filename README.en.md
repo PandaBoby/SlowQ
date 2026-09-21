@@ -131,8 +131,7 @@ Once granted, a snail icon appears in the menu bar. To verify it's active, check
 | Menu item | Effect |
 |---|---|
 | Disable / Enable ⌘Q interception | Temporarily turn interception off (e.g. to quit several apps in a row) |
-| Hold duration → 1/2/3/5 s | Adjust the hold time; persisted automatically |
-| Menu bar icon: Auto / Mono / Color | Click to cycle. **Auto** (default) detects whether the artwork is monochrome and applies a template image when it is — macOS then renders it white on dark menu bars and black on light ones. Color art stays in full color |
+| Hold duration → 0.5/1/2/3/5 s | Adjust the hold time; persisted automatically |
 | Quit SlowQ (⌥⌘Q) | Quit SlowQ itself (`⌥⌘Q` avoids self-interception) |
 
 ## How it works
@@ -172,7 +171,7 @@ Settings persist via `UserDefaults` (domain `com.slowq.app`):
 
 ```bash
 defaults write com.slowq.app holdSeconds -float 3            # hold duration (seconds)
-defaults write com.slowq.app statusIconTemplate -bool true   # menu bar icon: mono template
+defaults write com.slowq.app statusIconTemplate -bool true   # force mono menu bar icon (default: auto-detect)
 defaults write com.slowq.app debugLog -bool true             # debug logging (off by default)
 
 # tail the log
@@ -185,7 +184,8 @@ tail -f ~/Library/Logs/SlowQ.log
 SlowQ/
 ├── build-app.sh                  # one-shot build: icons → compile → package → sign
 ├── tools/
-│   └── gen-statusbar.swift       # menu bar icon generator (crops padding, scales)
+│   ├── gen-statusbar.swift       # menu bar icon generator (crops padding, scales)
+│   └── gen-appicon.swift         # app icon generator (keeps aspect ratio, no stretching)
 ├── SlowQ/
 │   ├── Package.swift             # SwiftPM manifest
 │   ├── SlowQ.png / .svg          # icon source (replace + rebuild to change icons)
@@ -211,9 +211,13 @@ SlowQ/
 
 **Icon hard to see on a dark menu bar**
 
-SlowQ defaults to **Auto** mode: when the artwork is monochrome (e.g. a pure black silhouette) it is used as a template image, so macOS renders it white on dark menu bars and black on light ones — never a black glyph on a black bar.
+SlowQ uses **Auto** mode: when the artwork is monochrome (e.g. a pure black silhouette) it is used as a template image, so macOS renders it white on dark menu bars and black on light ones — never a black glyph on a black bar. Genuinely colored artwork keeps its colors.
 
-If you previously forced **Color** while the artwork happens to be solid black, the icon will vanish on a dark menu bar. Click `Menu bar icon: Color (manual)` to cycle back to **Auto**.
+The icon can only vanish if you explicitly forced color in the terminal with `defaults write com.slowq.app statusIconTemplate -bool false` while the artwork happens to be solid black. Restore auto with:
+
+```bash
+defaults delete com.slowq.app statusIconTemplate
+```
 
 **Changing the icon**
 
