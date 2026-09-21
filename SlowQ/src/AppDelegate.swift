@@ -1,10 +1,11 @@
 import Cocoa
 import Carbon.HIToolbox
 import ApplicationServices
+import ServiceManagement
 
 // MARK: - AppDelegate
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var statusItem: NSStatusItem!
     private var eventTap: CFMachPort?
@@ -13,6 +14,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // 按住阈值(秒),可在菜单中调节
     private var holdSeconds: Double = 3.0
     private var enabled = true
+
+    // ── 实用功能状态 ──
+    /// 是否隐藏菜单栏图标(持久化)。隐藏后只能通过重新启动应用找回图标,
+    /// 因此每次启动都会先显示 10 秒作为"逃生窗口"。
+    private var statusItemHidden: Bool {
+        get { UserDefaults.standard.bool(forKey: "statusItemHidden") }
+        set { UserDefaults.standard.set(newValue, forKey: "statusItemHidden") }
+    }
+    private var autoHideTimer: Timer?
+    /// 定时暂停的截止时间;nil 表示未定时暂停
+    private var pauseUntil: Date?
+    private var pauseTimer: Timer?
 
     // 状态机
     private var holding = false
@@ -31,6 +44,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 无论是否已授权都先显示菜单栏图标,让用户能立即看到应用已启动、
         // 并可随时从菜单退出或打开权限设置(否则未授权时图标不出现,容易被当成没启动)。
         setupStatusItem()
+
+        // 若用户设过"隐藏菜单栏图标",每次启动仍先显示 10 秒 ——
+        // 否则图标一旦隐藏就再也没有入口把它找回来(只能靠删偏好文件)。
+        if statusItemHidden {
+            log("菜单栏图标处于隐藏设置,启动后 10 秒自动隐藏")
+            scheduleAutoHide(after: 10)
+            rebuildMenu()   // 让菜单顶部出现"即将自动隐藏"的提示项
+        }
 
         // 主动检查辅助功能权限
         let trusted = AXIsProcessTrustedWithOptions(
@@ -166,6 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
+        // 关键:系统会持久化状态栏项的可见性,隐藏过一次后新建的实例仍是隐藏的。
+        // 显式置为可见,启动时才会有那个 10 秒"逃生窗口";之后由定时器再隐藏。
+        statusItem.isVisible = true
         if let button = statusItem.button {
             if let icon = loadStatusIcon() {
                 button.image = icon // 尺寸由资源自身决定,不强制缩放
@@ -179,15 +203,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        menu.delegate = self   // 打开菜单时取消"启动后自动隐藏"
 
+        // 启动后的 10 秒逃生窗口:提示图标即将自动隐藏,打开菜单即可保留
+        if autoHideTimer != nil {
+            let hint = NSMenuItem(
+                title: "⏱ 菜单栏图标将在启动 10 秒后隐藏(打开菜单即保留)",
+                action: nil, keyEquivalent: ""
+            )
+            hint.isEnabled = false
+            menu.addItem(hint)
+            menu.addItem(.separator())
+        }
+
+        // ── 拦截开关 ──
         let toggle = NSMenuItem(
             title: enabled ? "停用(暂时不拦截 ⌘Q)" : "启用拦截 ⌘Q",
             action: #selector(toggleEnabled), keyEquivalent: ""
         )
         toggle.target = self
         menu.addItem(toggle)
+
+        // ── 定时暂停:适合"接下来一段时间不想被拦"的场景,到点自动恢复 ──
+        if let until = pauseUntil {
+            let mins = max(1, Int(ceil(until.timeIntervalSinceNow / 60)))
+            let info = NSMenuItem(title: "已暂停,还剩约 \(mins) 分钟", action: nil, keyEquivalent: "")
+            info.isEnabled = false
+            menu.addItem(info)
+            let resume = NSMenuItem(title: "立即恢复拦截", action: #selector(resumeNow), keyEquivalent: "")
+            resume.target = self
+            menu.addItem(resume)
+        } else {
+            let pauseTitle = NSMenuItem(title: "暂停拦截", action: nil, keyEquivalent: "")
+            pauseTitle.isEnabled = false
+            menu.addItem(pauseTitle)
+            for mins in [5, 15, 60] {
+                let item = NSMenuItem(title: "\(mins) 分钟", action: #selector(pauseFor(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = mins
+                menu.addItem(item)
+            }
+        }
         menu.addItem(.separator())
 
+        // ── 按住时长 ──
         let title = NSMenuItem(title: "按住时长", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
@@ -202,6 +261,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.representedObject = s
             menu.addItem(item)
         }
+        menu.addItem(.separator())
+
+        // ── 通用 ──
+        let login = NSMenuItem(
+            title: "登录时自动启动\(launchAtLoginEnabled ? " ✓" : "")",
+            action: #selector(toggleLaunchAtLogin), keyEquivalent: ""
+        )
+        login.target = self
+        menu.addItem(login)
+
+        let hide = NSMenuItem(
+            title: "隐藏菜单栏图标", action: #selector(hideStatusItem), keyEquivalent: ""
+        )
+        hide.target = self
+        menu.addItem(hide)
+
+        let about = NSMenuItem(
+            title: "关于 慢Q (v\(appVersion))", action: #selector(showAbout), keyEquivalent: ""
+        )
+        about.target = self
+        menu.addItem(about)
         menu.addItem(.separator())
 
         // 未授权时给出明确入口:重建后辅助功能授权会失效,需要重新勾选
@@ -223,6 +303,120 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
 
         statusItem.menu = menu
+    }
+
+    // MARK: 实用功能
+
+    /// 当前应用版本(读 Info.plist)
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+    }
+
+    /// 安排"启动后自动隐藏菜单栏图标"
+    private func scheduleAutoHide(after seconds: TimeInterval) {
+        autoHideTimer?.invalidate()
+        autoHideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.autoHideTimer = nil
+            guard self.statusItemHidden else { return }
+            self.statusItem.isVisible = false
+            self.log("菜单栏图标已自动隐藏(重新启动应用可再次显示)")
+        }
+    }
+
+    @objc private func hideStatusItem() {
+        statusItemHidden = true
+        autoHideTimer?.invalidate()
+        autoHideTimer = nil
+        statusItem.isVisible = false
+        log("菜单栏图标已隐藏(重新启动应用可再次显示)")
+    }
+
+    /// 打开菜单即取消待执行的自动隐藏(用户显然还需要这个图标)
+    func menuWillOpen(_ menu: NSMenu) {
+        if autoHideTimer != nil {
+            autoHideTimer?.invalidate()
+            autoHideTimer = nil
+            log("用户打开了菜单,取消自动隐藏")
+        }
+    }
+
+    // ── 定时暂停 ──
+    @objc private func pauseFor(_ sender: NSMenuItem) {
+        guard let mins = sender.representedObject as? Int else { return }
+        pauseUntil = Date().addingTimeInterval(TimeInterval(mins * 60))
+        enabled = false
+        pauseTimer?.invalidate()
+        pauseTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] t in
+            guard let self else { t.invalidate(); return }
+            if let until = self.pauseUntil, until.timeIntervalSinceNow <= 0 {
+                t.invalidate()
+                self.resumeNow()
+            } else {
+                self.rebuildMenu()   // 刷新剩余时间
+            }
+        }
+        log("已暂停拦截 \(mins) 分钟")
+        rebuildMenu()
+    }
+
+    @objc private func resumeNow() {
+        pauseUntil = nil
+        pauseTimer?.invalidate()
+        pauseTimer = nil
+        enabled = true
+        log("已恢复拦截")
+        rebuildMenu()
+    }
+
+    // ── 登录时自动启动 ──
+    private var launchAtLoginEnabled: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        do {
+            if launchAtLoginEnabled {
+                try SMAppService.mainApp.unregister()
+                log("已关闭登录时自动启动")
+            } else {
+                try SMAppService.mainApp.register()
+                log("已开启登录时自动启动")
+            }
+        } catch {
+            log("设置登录项失败: \(error.localizedDescription)")
+            let alert = NSAlert()
+            alert.messageText = launchAtLoginEnabled ? "无法关闭登录时自动启动" : "无法开启登录时自动启动"
+            alert.informativeText = """
+            \(error.localizedDescription)
+
+            提示:该功能需要应用位于「应用程序」文件夹中(即 /Applications/SlowQ.app)。
+            开发目录里的构建可能无法注册登录项。
+            """
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+        }
+        rebuildMenu()
+    }
+
+    // ── 关于 ──
+    @objc private func showAbout() {
+        let alert = NSAlert()
+        alert.messageText = "慢Q (SlowQ) v\(appVersion)"
+        alert.informativeText = """
+        防误触退出助手 · 退一步,再确认。
+        Slow down quitting.
+
+        按住 ⌘Q 满设定时长才会退出应用,避免误触。
+
+        GitHub: github.com/PandaBoby/SlowQ
+        Gitee:  gitee.com/pandaboby/SlowQ
+        """
+        alert.addButton(withTitle: "打开 GitHub")
+        alert.addButton(withTitle: "好")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(string: "https://github.com/PandaBoby/SlowQ")!)
+        }
     }
 
     /// 打开系统设置的辅助功能面板

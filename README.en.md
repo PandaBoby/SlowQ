@@ -40,7 +40,9 @@ SlowQ turns `⌘Q` into a deliberate action: press it and a countdown ring float
 | 🎨 **Polished HUD** | Dark glass card, spring entrance animation, blue→red gradient progress ring, pulse glow as it nears completion |
 | 🔒 **Privacy first** | Logging is off by default; when enabled it records `⌘Q` events only — never other keystrokes |
 | 🪶 **Featherweight** | Menu bar app, no Dock icon; the animation loop runs only while the HUD is visible |
-| 🚫 **Instantly disableable** | Pause interception from the menu; quit SlowQ itself with `⌥⌘Q` so it never blocks itself |
+| 🚫 **Instantly disableable** | Pause from the menu, or set a 5/15/60-minute timed pause that re-enables itself |
+| 🚀 **Launch at login** | Optional auto-start so the guard is always running |
+| 🙈 **Hideable icon** | Hide the menu bar icon if you don't want it taking space — a 10-second window on every launch means it can never be lost |
 
 ## Preview
 
@@ -134,8 +136,22 @@ Once granted, a snail icon appears in the menu bar. To verify it's active, check
 | Menu item | Effect |
 |---|---|
 | Disable / Enable ⌘Q interception | Temporarily turn interception off (e.g. to quit several apps in a row) |
+| Pause → 5 / 15 / 60 minutes | Timed pause that **re-enables itself**; the menu shows the time remaining |
 | Hold duration → 0.5/1/2/3/5 s | Adjust the hold time; persisted automatically |
+| Launch at login | Start automatically at login (via the system `SMAppService` login item) |
+| Hide menu bar icon | Hide the menu bar icon for users who don't want it taking up space |
+| About 慢Q | Version and project links |
 | Quit SlowQ (⌥⌘Q) | Quit SlowQ itself (`⌥⌘Q` avoids self-interception) |
+
+**Getting the menu bar icon back after hiding it**
+
+Interception **keeps working** while the icon is hidden, but there is no menu entry left to click. To make sure the icon can never be lost for good, there is an escape hatch:
+
+- **Every launch shows the icon for the first 10 seconds**, with a menu hint reading "⏱ the icon will hide 10 s after launch"
+- **Opening the menu once during those 10 seconds cancels the hide** for that session
+- So to get the icon back: **quit and relaunch 慢Q** (or log out and back in)
+
+> Implementation note: macOS persists status item visibility, so a freshly created item stays hidden after a previous hide. The app therefore forces the item visible on every launch and lets a timer decide whether to hide it again.
 
 ## How it works
 
