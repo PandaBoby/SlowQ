@@ -19,12 +19,9 @@ elif [ -d ".build/out/Products/Release/SlowQ_SlowQ.bundle" ]; then
     echo "📦 资源 bundle 已打包(out 布局)"
 fi
 
-# ── 图标:从单一原图生成全尺寸 icns(来源可为任何 iconset/单图)──
-# 图标源:优先 SLOWQ_ICONSET 环境变量,其次自动探测 Downloads 下的图标包
-ICONSET_SRC="${SLOWQ_ICONSET:-}"
-if [ -z "$ICONSET_SRC" ] && [ -f "$HOME/Downloads/app-icons-66821d15-eb39-482e-ac7b-391a28422ca4_1/original/icon-1024.png" ]; then
-    ICONSET_SRC="$HOME/Downloads/app-icons-66821d15-eb39-482e-ac7b-391a28422ca4_1/original/icon-1024.png"
-fi
+# ── 图标:从单一原图生成全尺寸 icns ──
+# 图标源:优先 SLOWQ_ICONSET 环境变量,默认用项目内的 蜗牛.png(自包含,当前目录已是 SlowQ/)
+ICONSET_SRC="${SLOWQ_ICONSET:-$PWD/蜗牛.png}"
 ICONSET_TMP="$APP/Contents/Resources/AppIcon.iconset"
 if [ -n "$ICONSET_SRC" ] && [ -f "$ICONSET_SRC" ]; then
     IT=$(mktemp -d)
