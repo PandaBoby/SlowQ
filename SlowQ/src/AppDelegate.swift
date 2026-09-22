@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var commandReleaseTimer: Timer?
 
     private var hudWindow: OverlayWindow?
+    /// HUD 显示代数:每次 showHUD 递增,用于作废在途的淡出完成回调(见 hideHUD)
+    private var hudGeneration = 0
     var toastWindow: ToastWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -161,6 +163,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func handleWillSleep() {
         log("系统即将睡眠,重置按住状态")
         resetState()
+        // 暂停窗口也必须一并清掉:睡眠会作废 tap 端口,唤醒后 keyState(⌘)
+        // 大概率已是 false,残留的 commandReleaseTimer 会在第一个 tick 就把
+        // 一条真实合成 ⌘Q 投给唤醒后最前面的应用 —— 与 holdTimer 同型的
+        // 「跨睡眠兑现」问题。
+        commandReleaseTimer?.invalidate()
+        commandReleaseTimer = nil
+        if eventTapIsPaused { eventTapIsPaused = false }
     }
 
     /// 唤醒后:先归零状态机,再校验拦截是否还活着
@@ -692,6 +701,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Event handling
 
+    /// 合成 ⌘Q 的标记值:写入 eventSourceUserData,用于让自家 tap
+    /// 识别并放行自己投递的合成事件(见 sendQuitToActiveApp)
+    private static let syntheticQuitTag: Int64 = 0x536C_6F77_51 // "SlowQ"
+
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByUserInput || type == .tapDisabledByTimeout {
             // 暂停窗口内不干预(否则会提前重开 tap、破坏暂停契约);
@@ -707,6 +720,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let flags = event.flags
         let cmd = flags.contains(.maskCommand)
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        // 自家投递的合成 ⌘Q(带标记)直接放行,避免 tap 开启状态下被自己再拦
+        if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticQuitTag {
+            return Unmanaged.passUnretained(event)
+        }
 
         // 隐私:只记录 ⌘Q 相关事件,不落盘其他按键序列
         let isQEvent = keyCode == 12
@@ -824,16 +841,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// 暂停状态(单一来源):tap 物理禁用 + 物理按键不放行,两者同生命周期。
+    /// 暂停状态(单一来源):暂停窗口内不放行**物理** ⌘Q。
     /// 赋值处:fireQuit 置 true / sendQuitToActiveApp 完成后置 false。
+    ///
+    /// 注意:这里**不能**物理禁用 tap(CGEvent.tapEnable(false))。
+    /// 禁用 tap 期间,按住产生的 ⌘Q keyDown 系统按键重复不再经过回调,
+    /// 会原样漏给前台应用,把 App A 退掉;之后轮询检测到 ⌘ 松开,
+    /// 合成 ⌘Q 又投给已接管前台的 App B —— 一次按满连退两个应用。
+    /// tap 保持开启,由 handleEvent 的 pausedForSyntheticQuit 分支吞掉物理 ⌘Q
+    /// 即可;合成事件本身走 postToPid 的 per-PID 通道、不经会话 tap,不会被再拦。
     private var eventTapIsPaused = false {
         didSet {
             guard eventTapIsPaused != oldValue else { return }
             // 记录进入暂停的时刻,供看门狗对暂停窗口加硬超时
             pausedAt = eventTapIsPaused ? Date() : nil
-            if let tap = eventTap {
-                CGEvent.tapEnable(tap: tap, enable: !eventTapIsPaused)
-            }
         }
     }
 
@@ -845,6 +866,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 必须带硬超时:若 ⌘ 的 keyUp 被睡眠转换吞掉、或唤醒后键态被 latch,
         // 没有超时的轮询会让 eventTapIsPaused 永久为 true —— tap 从此物理禁用、
         // ⌘Q 不再被拦截,而且没有任何恢复路径(与本次故障同症状)。
+        // 超时语义是**放弃**本次合成退出:此时 ⌘ 键态可疑(latch),强行投递 ⌘Q
+        // 会退出用户未必想退的应用;看门狗的 3s 强制复位作为最后兜底。
         commandReleaseTimer?.invalidate()
         let deadline = Date().addingTimeInterval(1.5)
         commandReleaseTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] t in
@@ -857,8 +880,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } else if Date() >= deadline {
                 t.invalidate()
                 self.commandReleaseTimer = nil
-                self.log("等待 ⌘ 松开超时,强制放行合成 ⌘Q")
-                self.sendQuitToActiveApp()
+                self.log("等待 ⌘ 松开超时,放弃本次合成退出并复位暂停状态")
+                self.eventTapIsPaused = false
+                self.resetState()
             }
         }
     }
@@ -869,13 +893,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let src = CGEventSource(stateID: .combinedSessionState)
             let keyDown = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_ANSI_Q), keyDown: true)
             keyDown?.flags = .maskCommand
+            // 烙上标记:tap 不再物理禁用,若这条合成 ⌘Q 经过自家 tap,
+            // 靠标记识别并放行,避免被自己再拦一次
+            keyDown?.setIntegerValueField(.eventSourceUserData, value: Self.syntheticQuitTag)
             keyDown?.postToPid(frontApp.processIdentifier)
             let keyUp = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_ANSI_Q), keyDown: false)
             keyUp?.flags = .maskCommand
+            keyUp?.setIntegerValueField(.eventSourceUserData, value: Self.syntheticQuitTag)
             keyUp?.postToPid(frontApp.processIdentifier)
         }
-        // 恢复拦截。注意 postToPid 的合成事件走 per-PID 通道、不经会话 tap,
-        // 因此 tap 恢复后不会再次拦截到这条合成 ⌘Q。
+        // 恢复拦截。合成事件走 per-PID 通道、不经会话 tap,
+        // 因此 tap 保持开启也不会再次拦截到这条合成 ⌘Q(详见 eventTapIsPaused 注释)。
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self else { return }
             self.eventTapIsPaused = false
@@ -1257,11 +1285,15 @@ extension AppDelegate {
     }
 
     func showHUD() {
+        hudGeneration += 1   // 作废所有在途的淡出回调,防止它们 orderOut 新一轮 HUD
         if hudWindow == nil { hudWindow = OverlayWindow() }
         hudWindow?.progress.total = holdSeconds
         hudWindow?.progress.elapsed = 0
         hudWindow?.alphaValue = 0
         hudWindow?.orderFrontRegardless()
+        // 每次显示都重建动画:displayLink 绑定创建时的显示器配置,
+        // 长时间运行/睡眠后可能已静默失效,复用会导致进度环永久冻结
+        hudWindow?.progress.stopAnimation()
         hudWindow?.progress.startAnimation() // 显示时才开启动画循环
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.18
@@ -1275,10 +1307,15 @@ extension AppDelegate {
 
     func hideHUD() {
         guard let w = hudWindow, w.isVisible else { return }
+        hudGeneration += 1   // 本次隐藏的代数;回调触发时若代数已变,说明期间又 showHUD 了
+        let gen = hudGeneration
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.15
             w.animator().alphaValue = 0
         }, completionHandler: {
+            // 竞态保护:0.15s 淡出期间用户可能再次按下 ⌘Q 触发了新的 showHUD,
+            // 此时这个迟到的回调不能把新一轮 HUD orderOut 掉(否则动画"消失")
+            guard self.hudGeneration == gen else { return }
             w.orderOut(nil)
             w.alphaValue = 1
             w.progress.stopAnimation() // 隐藏即停止空转
