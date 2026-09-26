@@ -154,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ) { [weak self] _ in
             guard let self else { return }
             self.ensureEventTapHealthy(reason: "screenParametersChanged")
+            self.hudWindow?.recentreOnCurrentScreen()
             self.hudWindow?.progress.refreshAnimationIfVisible()
         }
 
@@ -935,16 +936,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 final class OverlayWindow: NSWindow {
     let progress = ProgressIndicatorView()
+    static let preferredSize = CGSize(width: 240, height: 260)
 
     init() {
-        let size = CGSize(width: 240, height: 260)
-        // NSScreen.main = 键盘焦点所在屏幕(拦截触发时用户正在使用的屏)
-        let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let x = screenFrame.midX - size.width / 2
-        let y = screenFrame.midY - size.height / 2
+        let size = Self.preferredSize
+        let frame = Self.centeredFrame()
 
         super.init(
-            contentRect: NSRect(origin: CGPoint(x: x, y: y), size: size),
+            contentRect: frame,
             styleMask: [.borderless],
             backing: .buffered, defer: false
         )
@@ -958,6 +957,26 @@ final class OverlayWindow: NSWindow {
 
         progress.frame = NSRect(origin: .zero, size: size)
         contentView = progress
+    }
+
+    /// 按键盘焦点所在屏幕计算居中 frame。
+    /// NSScreen.main = 拦截触发时用户正在使用的屏;窗口是 stationary 的,
+    /// 不会跟随显示器变化移动,因此每次显示前都要重算。
+    static func centeredFrame() -> NSRect {
+        let size = preferredSize
+        let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        return NSRect(
+            x: screenFrame.midX - size.width / 2,
+            y: screenFrame.midY - size.height / 2,
+            width: size.width, height: size.height
+        )
+    }
+
+    /// 每次显示前调用:把窗口摆回当前焦点屏幕的中心。
+    /// 进程长期运行中,合盖唤醒 / 外接屏插拔 / 主屏切换都会让旧坐标
+    /// 落到看不见的屏幕上 —— HUD 会"消失"而拦截功能一切正常。
+    func recentreOnCurrentScreen() {
+        setFrame(Self.centeredFrame(), display: false)
     }
 }
 
@@ -973,7 +992,10 @@ final class ProgressIndicatorView: NSView {
 
     // 动画状态
     private var displayLink: CVDisplayLink?
-    private var displayLinkBox: UnsafeMutableRawPointer? // 保存 box 指针以便释放
+    // 回调上下文盒子:与 view 同生命周期(仅 deinit 释放)。
+    // 不在 stopAnimation 里释放 —— CVDisplayLinkStop 返回不保证在途回调
+    // 已结束,立刻 release 会让回调线程解引用已释放内存。
+    private var displayLinkBox: UnsafeMutableRawPointer?
     private var pulsePhase: CGFloat = 0
 
     // 图标:一次着色缓存,draw 每帧直接使用
@@ -1004,15 +1026,20 @@ final class ProgressIndicatorView: NSView {
 
     /// 显示时启动动画循环,隐藏时停止(避免常驻空转)
     func startAnimation() {
-        guard displayLink == nil else { CVDisplayLinkStart(displayLink!); return }
+        stopAnimation()
         var link: CVDisplayLink?
         CVDisplayLinkCreateWithActiveCGDisplays(&link)
         guard let link else { return }
         displayLink = link
-        // 弱引用盒子:回调不 retain view
-        let box = WeakBox(self)
-        let opaque = Unmanaged.passRetained(box).toOpaque()
-        displayLinkBox = opaque
+        // 弱引用盒子:回调不 retain view,且与 view 同生命周期(见 deinit)。
+        // 每次启动都把盒子的 weak 引用拨回 self —— view 从未重建时这是
+        // 幂等的,重建时则修复悬空引用。
+        if displayLinkBox == nil {
+            displayLinkBox = Unmanaged.passRetained(WeakBox(self)).toOpaque()
+        } else {
+            Unmanaged<WeakBox>.fromOpaque(displayLinkBox!).takeUnretainedValue().value = self
+        }
+        let opaque = displayLinkBox!
         CVDisplayLinkSetOutputCallback(link, { _, _, _, _, flagsOut, ctx in
             let box = Unmanaged<WeakBox>.fromOpaque(ctx!).takeUnretainedValue()
             if let view = box.value {
@@ -1028,12 +1055,8 @@ final class ProgressIndicatorView: NSView {
         if let link = displayLink {
             CVDisplayLinkStop(link)
         }
-        // 必须置空:link 是按创建时的显示器配置建立的,睡眠/显示器重配置后
-        // 可能不再回调。留着重启只会复用一个已死的 link,进度环永久冻结。
-        if let opaque = displayLinkBox {
-            Unmanaged<WeakBox>.fromOpaque(opaque).release()
-            displayLinkBox = nil
-        }
+        // 只停不释放:box 的释放统一在 deinit。link 置空即可,
+        // 下次 startAnimation 会走创建分支,不会复用已死的 link。
         displayLink = nil
     }
 
@@ -1054,8 +1077,12 @@ final class ProgressIndicatorView: NSView {
         if let link = displayLink {
             CVDisplayLinkStop(link)
         }
+        // 停止后仍有在途回调的可能,推迟到下一个 runloop tick 再释放,
+        // 避免回调线程解引用已释放的盒子
         if let opaque = displayLinkBox {
-            Unmanaged<WeakBox>.fromOpaque(opaque).release()
+            DispatchQueue.global(qos: .utility).async {
+                Unmanaged<WeakBox>.fromOpaque(opaque).release()
+            }
         }
     }
 
@@ -1287,10 +1314,16 @@ extension AppDelegate {
     func showHUD() {
         hudGeneration += 1   // 作废所有在途的淡出回调,防止它们 orderOut 新一轮 HUD
         if hudWindow == nil { hudWindow = OverlayWindow() }
+        // 窗口是 stationary 的,坐标停留在创建(或上次重摆)时的屏幕上;
+        // 长期运行中显示器配置一变就再也看不见。每次显示都重摆回焦点屏。
+        hudWindow?.recentreOnCurrentScreen()
         hudWindow?.progress.total = holdSeconds
         hudWindow?.progress.elapsed = 0
         hudWindow?.alphaValue = 0
         hudWindow?.orderFrontRegardless()
+        if let w = hudWindow, let scr = NSScreen.main {
+            log("HUD 显示 frame=\(Int(w.frame.width))x\(Int(w.frame.height)) @(\(Int(w.frame.minX)),\(Int(w.frame.minY))) 屏幕=\(Int(scr.frame.width))x\(Int(scr.frame.height)) @(\(Int(scr.frame.minX)),\(Int(scr.frame.minY))) 居中=\(abs(w.frame.midX - scr.frame.midX) < 0.5 && abs(w.frame.midY - scr.frame.midY) < 0.5)")
+        }
         // 每次显示都重建动画:displayLink 绑定创建时的显示器配置,
         // 长时间运行/睡眠后可能已静默失效,复用会导致进度环永久冻结
         hudWindow?.progress.stopAnimation()
